@@ -158,6 +158,46 @@ export const extractDomains = (text: string): string[] => {
   return domains;
 };
 
+// Deterministic URL normalization for correlation: strip trailing punctuation and
+// fragments, lowercase scheme/host, drop a leading "www." host prefix (same stance
+// as normalizeDomain), drop a trailing slash, and reject unparseable input.
+export const normalizeUrl = (raw: string): string => {
+  const trimmed = raw.trim().replace(/[.,;:!?)\]}]+$/, "");
+  if (trimmed === "") {
+    return "";
+  }
+
+  const candidate = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed;
+
+  try {
+    const parsed = new URL(candidate);
+    parsed.hash = "";
+    parsed.hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (parsed.pathname.length > 1 && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    const normalized = parsed.toString();
+    return normalized.endsWith("/") && (parsed.pathname === "/" || parsed.pathname === "")
+      ? normalized.slice(0, -1)
+      : normalized;
+  } catch {
+    return "";
+  }
+};
+
+export const extractUrls = (text: string): string[] => {
+  const urls: string[] = [];
+
+  for (const match of text.matchAll(URL_LIKE_PATTERN)) {
+    const url = normalizeUrl(match[0]);
+    if (url !== "" && !urls.includes(url)) {
+      urls.push(url);
+    }
+  }
+
+  return urls;
+};
+
 export const collectOfficialDomains = (
   brand: Pick<Brand, "website">,
   assets: OfficialAsset[],

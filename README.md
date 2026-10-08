@@ -24,8 +24,9 @@
 | TASK 11 — Multimodal Evidence Engine | ✅ |
 | TASK 12 — Explainable Risk Engine | ✅ |
 | TASK 13 — Why Flagged / Why NOT Flagged | ✅ |
+| TASK 14 — Threat Correlation | ✅ |
 
-Next: **TASK 14**
+Next: **TASK 15**
 
 Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
 
@@ -164,6 +165,7 @@ curl -X POST http://localhost:4000/api/candidates \
 | POST | `/api/candidates/:candidateId/analyze/evidence` | Multimodal evidence aggregation for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/risk` | Explainable risk score + reasons for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/explanation` | Why-flagged / why-NOT-flagged explanations for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/correlation` | Related candidates of the same brand + correlation cluster for `SOCIAL`/`APP` candidates |
 
 **Name/handle analysis**
 
@@ -362,6 +364,36 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 - **`summary`:** one deterministic line from risk level + counts + protection — strong / moderate / weak evidence, insufficient evidence, or protective evidence preventing inappropriate escalation
 - Other candidate types get **400** `EXPLANATION_NOT_APPLICABLE`
 
+**Threat correlation**
+
+`SOCIAL` and `APP` candidates only. A deterministic correlation engine over other candidates of the **same target brand** — shared infrastructure (domain/URL), shared brand-identity/visual evidence, and shared strong signals. No LLM, no risk-score reuse:
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "cluster": { "candidateIds": ["c123", "c456"], "size": 2 },
+    "relatedCandidates": [
+      {
+        "candidateId": "c456",
+        "relationshipScore": 86,
+        "relationshipLevel": "VERY_HIGH",
+        "links": [
+          { "type": "SHARED_DOMAIN", "strength": "STRONG", "source": "TEXT", "explanation": "Both candidates reference the same external domain evil-pay.com …" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- **Link types + weights:** `SHARED_DOMAIN` (45) · `SHARED_URL` (45, damped ×0.25 to 11 when the domain is already shared — same underlying infrastructure) · `SHARED_BRAND_IDENTITY` (30) · `SHARED_VISUAL_EVIDENCE` (25) · `SHARED_STRONG_SIGNALS` (20, only signals not covered by the other links — no double counting)
+- **Score** = min(100, Σ link weights) → `LOW` 0–24 / `MEDIUM` 25–49 / `HIGH` 50–74 / `VERY_HIGH` 75–100; ties broken by candidate ID for determinism
+- **False-positive protection:** official domains/URLs never become links, exact-official subjects/peers are excluded, and sharing only the brand registry (without strong evidence) creates no link
+- **`cluster`:** the transitive connected component containing the subject (subject first), so a domain-level peer of a related candidate is included even without a direct link
+- Other candidate types get **400** `CORRELATION_NOT_APPLICABLE`
+
 ### Response format
 
 - Success: `{ "success": true, "data": ... }` (list endpoints add `count`)
@@ -369,5 +401,5 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 
 ## Roadmap
 
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅.
-**Later:** threat graph → campaign detection → AI Investigator.
+**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅.
+**Later:** campaign detection → AI Investigator.

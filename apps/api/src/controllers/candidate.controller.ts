@@ -48,6 +48,10 @@ import {
   analyzeCandidateExplanation,
   type ExplanationFailureCode,
 } from "../services/explanation.service";
+import {
+  analyzeCandidateCorrelation,
+  type CorrelationFailureCode,
+} from "../services/correlation.service";
 
 const NAME_ANALYSIS_FAILURE_MESSAGES: Record<
   Exclude<NameAnalysisFailureCode, "CANDIDATE_NOT_FOUND">,
@@ -140,6 +144,16 @@ const EXPLANATION_FAILURE_MESSAGES: Record<
     "Explanation analysis is only applicable to SOCIAL and APP candidates.",
   NO_TARGET_BRAND:
     "Candidate has no target brand (brandId is missing) — cannot explain risk against official assets.",
+};
+
+const CORRELATION_FAILURE_MESSAGES: Record<
+  Exclude<CorrelationFailureCode, "CANDIDATE_NOT_FOUND" | "BRAND_NOT_FOUND">,
+  string
+> = {
+  CORRELATION_NOT_APPLICABLE:
+    "Correlation analysis is only applicable to SOCIAL and APP candidates.",
+  NO_TARGET_BRAND:
+    "Candidate has no target brand (brandId is missing) — cannot correlate against other candidates of the brand.",
 };
 
 const readOptionalString = (value: unknown, field: string): string | undefined => {
@@ -431,6 +445,29 @@ export const analyzeCandidateExplanationHandler = asyncHandler(
         );
       }
       throw ApiError.badRequest(EXPLANATION_FAILURE_MESSAGES[outcome.code], {
+        code: outcome.code,
+      });
+    }
+
+    res.status(200).json({ success: true, data: outcome.data });
+  },
+);
+
+export const analyzeCandidateCorrelationHandler = asyncHandler(
+  async (req, res) => {
+    const candidateId = req.params.candidateId;
+    const outcome = await analyzeCandidateCorrelation(candidateId);
+
+    if (!outcome.ok) {
+      if (outcome.code === "CANDIDATE_NOT_FOUND") {
+        throw ApiError.notFound(`Candidate not found: ${candidateId}`);
+      }
+      if (outcome.code === "BRAND_NOT_FOUND") {
+        throw ApiError.notFound(
+          "Target brand referenced by the candidate does not exist.",
+        );
+      }
+      throw ApiError.badRequest(CORRELATION_FAILURE_MESSAGES[outcome.code], {
         code: outcome.code,
       });
     }

@@ -72,3 +72,21 @@ export const RISK_ENGINE_THRESHOLDS = {
     STRENGTH_WEIGHT: 0.2,
   },
 } as const;
+
+export const CORRELATION_THRESHOLDS = {
+  // per-type base weight of a correlation link; effective weights are summed and capped
+  LINK_WEIGHT: {
+    SHARED_DOMAIN: 45,
+    SHARED_URL: 45,
+    SHARED_BRAND_IDENTITY: 30,
+    SHARED_VISUAL_EVIDENCE: 25,
+    SHARED_STRONG_SIGNALS: 20,
+  },
+  // domain + URL describe the same underlying infrastructure: only the strongest counts fully
+  INFRA_OVERLAP_DAMPING: 0.25,
+  MAX_SCORE: 100,
+  // link strength label from the effective weight: >= STRONG → STRONG, >= MEDIUM → MEDIUM, else WEAK
+  STRENGTH: { STRONG: 40, MEDIUM: 25 },
+  // relationship levels: LOW 0–24, MEDIUM 25–49, HIGH 50–74, VERY_HIGH 75–100
+  LEVEL: { MEDIUM: 25, HIGH: 50, VERY_HIGH: 75 },
+} as const;

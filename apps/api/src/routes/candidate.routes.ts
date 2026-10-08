@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   analyzeCandidateAppRiskHandler,
+  analyzeCandidateCorrelationHandler,
   analyzeCandidateEvidenceHandler,
   analyzeCandidateExplanationHandler,
   analyzeCandidateLogoHandler,
@@ -40,6 +41,10 @@ candidateRouter.post(
 candidateRouter.post(
   "/:candidateId/analyze/explanation",
   analyzeCandidateExplanationHandler,
+);
+candidateRouter.post(
+  "/:candidateId/analyze/correlation",
+  analyzeCandidateCorrelationHandler,
 );
 candidateRouter.get("/", listCandidatesHandler);
 candidateRouter.get("/:id", getCandidateHandler);

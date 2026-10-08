@@ -21,9 +21,10 @@
 - [✓] TASK 11 — Multimodal Evidence Engine
 - [✓] TASK 12 — Explainable Risk Engine
 - [✓] TASK 13 — Why Flagged / Why NOT Flagged
+- [✓] TASK 14 — Threat Correlation
 
-**Current Task:** TASK 13
+**Current Task:** TASK 14
 
 **Status:** COMPLETED
 
-**Next Task:** TASK 14
+**Next Task:** TASK 15

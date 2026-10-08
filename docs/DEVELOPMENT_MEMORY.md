@@ -1164,3 +1164,85 @@ CHANGED package.json, docs/*, README.md
 - Explanation is read-only over Tasks 11/12 — if Task 14 adds correlation/campaign signals, surface them through Task 11/12 data first, then explain; do not re-score here
 - Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above
 - E2E recipe unchanged: ephemeral cluster `pg_ctl … start -p 55432`, `DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
+
+## TASK 14 — THREAT CORRELATION (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/correlation` — a deterministic correlation engine that relates a subject candidate to other candidates of the **same target brand** using fingerprint evidence (shared domain/URL, shared brand-identity evidence, shared visual evidence, shared strong signals). Produces per-peer `relationshipScore` (0–100), `relationshipLevel`, explainable `links[]`, and a transitive connected-component `cluster`. No LLM, no API key, no schema changes, no risk-score reuse.
+
+```
+NEW     src/services/correlation.service.ts    # buildCorrelationFingerprint + correlateFingerprints + buildCorrelationResult + analyzeCandidateCorrelation + getRelationshipLevel
+CHANGED src/config/constants.ts                # + CORRELATION_THRESHOLDS (LINK_WEIGHT / INFRA_OVERLAP_DAMPING / MAX_SCORE / STRENGTH / LEVEL)
+CHANGED src/services/social-risk.service.ts    # + normalizeUrl + extractUrls (reuses URL_LIKE_PATTERN)
+CHANGED src/controllers/candidate.controller.ts # + analyzeCandidateCorrelationHandler + CORRELATION_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts         # + POST /:candidateId/analyze/correlation
+NEW     tests/correlation.pure.cjs             # 60 pure assertions
+NEW     tests/correlation.e2e.cjs              # 48 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape
+```json
+{
+  "candidateId": "...",
+  "cluster": { "candidateIds": ["...", "..."], "size": 3 },
+  "relatedCandidates": [
+    { "candidateId": "...", "relationshipScore": 86, "relationshipLevel": "VERY_HIGH",
+      "links": [ { "type": "SHARED_DOMAIN", "strength": "STRONG", "source": "TEXT", "explanation": "…" } ] }
+  ]
+}
+```
+
+### Link types + weights (CORRELATION_THRESHOLDS.LINK_WEIGHT)
+| Type | Weight | Fires when |
+|---|---|---|
+| `SHARED_DOMAIN` | 45 | both fingerprints share a normalized external domain (fingerprinted from TEXT/NAME/APP evidence via `extractDomains`, official domains filtered out) |
+| `SHARED_URL` | 45 | both share a normalized URL (`normalizeUrl`: strip fragment/trailing punctuation, lowercase host, drop `www.` + trailing slash) — damped ×0.25 (→11, `WEAK`) when `SHARED_DOMAIN` also present (same underlying infrastructure), explanation suffix added |
+| `SHARED_BRAND_IDENTITY` | 30 | same non-null `brandId` AND both have HIGH non-protective IDENTITY/CONTENT evidence (TEXT_IDENTITY_MATCH, NAME_SIMILARITY, OFFICIAL_IDENTITY_CONFLICT …); explanation names the brand + shared strong-signal intersection |
+| `SHARED_VISUAL_EVIDENCE` | 25 | both have `LOGO_SIMILARITY` severity HIGH (consumes Task 8/11 evidence; synthetic-only today — candidates carry no logo field) |
+| `SHARED_STRONG_SIGNALS` | 20 | shared HIGH non-protective signals **not covered** by other links (EXTERNAL_DOMAIN covered by domain link; IDENTITY/CONTENT covered by brand link; LOGO_SIMILARITY covered by visual link) |
+
+- `relationshipScore = min(100, Σ effective link weights)`; risk score plays **no** part; levels 0–24 `LOW` / 25–49 `MEDIUM` / 50–74 `HIGH` / 75–100 `VERY_HIGH`
+- Strength: weight ≥40 `STRONG`, ≥25 `MEDIUM`, else `WEAK` (damping can demote `SHARED_URL` from STRONG to WEAK)
+- Links sorted effective weight desc → type asc; relatedCandidates sorted score desc → candidateId asc (ties deterministic)
+
+### Design decisions
+- **Scope:** universe = other candidates with the same `brandId` (`listCandidates({brandId})`, all types); non-SOCIAL/APP peers get empty evidence but are still checked via `normalizeDomain(value)` vs official domains
+- **Subject type gate:** subject must be SOCIAL/APP (`CORRELATION_NOT_APPLICABLE`); type check runs **before** brand check (pattern from Tasks 9/10)
+- **Anti-double-count coverage:** each shared signal is claimed by at most one link (highest-priority: domain > brand-identity > visual > strong-signals) so the same evidence never inflates the score twice
+- **FP protection (fingerprint filters):** official domains/URLs (`matchesOfficialDomain`) never become links; exact-official subject → empty result + self-only cluster; exact-official peers excluded from the universe; sharing only the brand registry without strong evidence creates no link
+- **Cluster:** deterministic BFS connected component from the subject (neighbors sorted score desc, then id asc); subject always first in `candidateIds`; size = `candidateIds.length`
+- **No SHARED_CONTACT / SHARED_PUBLISHER:** schema has no email/phone/publisher fields — link-type union documented as unsupported (never emitted, tests assert absence)
+- **URL helpers added to social-risk.service.ts** (`normalizeUrl`, `extractUrls`) reusing the private `URL_LIKE_PATTERN` — no duplicate regex; `extractUrls` dedupes + normalizes
+- **Outcome-union pattern (Tasks 6–13):** service returns `{ok:true,data}` / `{ok:false,code}`; controller maps `CANDIDATE_NOT_FOUND`→404, `BRAND_NOT_FOUND`→404, `CORRELATION_NOT_APPLICABLE`/`NO_TARGET_BRAND`→400 with `details.code`; failure-message `Record<Exclude<Code,"CANDIDATE_NOT_FOUND"|"BRAND_NOT_FOUND">, string>`
+- **Determinism:** no Map iteration order leaks, no randomness; reversed input candidate order produces byte-identical output (pure-tested)
+
+### API + failure mapping (same pattern as Tasks 6–13)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `CORRELATION_NOT_APPLICABLE` | **400** | `Correlation analysis is only applicable to SOCIAL and APP candidates.` + `details.code` |
+| `NO_TARGET_BRAND` | **400** | `Candidate has no target brand …` + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | `Target brand referenced by the candidate does not exist.` |
+
+### Test results (Task 14)
+- **Pure 60/60**: domain-only → 45 MEDIUM/STRONG; domain+URL → 56 HIGH with URL damped to 11 WEAK + infrastructure note; URL-only → 45; `normalizeUrl`/`extractUrls` normalization cases; brand+strong → 50 HIGH with TEXT_IDENTITY_MATCH claimed by brand link (strong-signals carries only SUPPORT_LANGUAGE); visual+brand no double count; harmless/unrelated → empty + self-cluster; weak LOW evidence only → no link; official subject → empty; official peer excluded; same brand alone → no link; inflation test 45+11+20=76 (< naive 110); cap test at 100 VERY_HIGH; deterministic; ordering strong-first; empty universe; unsupported types never appear (no SHARED_CONTACT/SHARED_PUBLISHER anywhere); level ladder 0/24/25/49/50/74/75/100; every link has valid type/source/strength/explanation; no riskScore/riskLevel in output; real fixtures via `buildCorrelationResult` — c1↔c2 **86 VERY_HIGH** [domain, brand, damped url], evil-domain peer **45 MEDIUM**, transitive cluster `{c1,c2,ew}` size 3, official + official-website peers absent, harmless/official subjects empty, subject-only → cluster size 1, input-order independent
+- **E2E 48/48**: valid correlation + exact top-level/link/related key sets + scores 0–100 + valid levels; strongest-pair 86 VERY_HIGH with 3 link types ordered; cluster transitive with subject first; no risk fields; harmless subject → empty; official social/app subjects → empty; official website/app excluded from cluster; non-SOCIAL subject → 400 `CORRELATION_NOT_APPLICABLE` (website + DOMAIN); missing → 404; orphan → 400 `NO_TARGET_BRAND`; GET → 404; deterministic repeat byte-identical; **Task 6–13 endpoint regressions** (name/text/logo/social-risk/app-risk/evidence/risk/explanation)
+- `npm run typecheck` / `npm run build` → **pass**
+- Combined suites: **359 pure + 329 e2e = 688 assertions, all green** (`npm test` / `npm run test:e2e` now chain correlation)
+
+### Database testing (Task 14)
+- Same ephemeral PostgreSQL recipe (cluster `/tmp/opencode/pgdata`, port 55432, server port 4100 via `setsid` so it survives the shell, PID file `/tmp/opencode/server.pid`); real `.env` untouched; server + cluster stopped after tests (verified port closed + `pg_ctl status`)
+
+### Limitations (recorded honestly)
+- `SHARED_VISUAL_EVIDENCE` cannot fire on real data today (candidate schema has no logo/image field) — synthetic pure-test only, will activate when Task 8-style logo analysis attaches to candidates
+- No contact-channel link types (SHARED_CONTACT/SHARED_PUBLISHER): schema has no email/phone/publisher fields; adding them later is additive (new weight constant + fingerprint field)
+- Correlation is brand-scoped only — cross-brand campaign correlation is Task 15's concern; same-brand clustering deliberately ignores risk score (a LOW-risk and a HIGH-risk peer can cluster if they share infrastructure)
+- Infra damping factor 0.25 is a heuristic constant, not calibrated against labeled data
+- `SHARED_BRAND_IDENTITY` treats any shared HIGH IDENTITY/CONTENT evidence as "strong resemblance" — with richer descriptions this could include benign shared text; domain/URL links carry the stronger weight for that reason
+
+### Notes for Task 15 (Campaign Detection)
+- Task 14's `cluster` is the same-brand connected component; campaign detection should build on `CorrelationFingerprint`/`correlateFingerprints` rather than re-deriving links, and decide explicitly whether campaigns span brands (Task 14 does not)
+- Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above; new codes get `details.code` + message entry in `CORRELATION_FAILURE_MESSAGES`-style maps
+- E2E recipe unchanged: ephemeral cluster `pg_ctl … start -p 55432`, `setsid env DATABASE_URL=… PORT=4100 node dist/server.js` (survives shell timeout), `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
+- `normalizeUrl`/`extractUrls` now live in social-risk.service.ts — reuse them instead of re-implementing URL parsing
