@@ -164,3 +164,50 @@ export const INVESTIGATION_THRESHOLDS = {
     FIELD_MAX: 500,
   },
 } as const;
+
+export const PLAYBOOK_THRESHOLDS = {
+  // prediction confidence = min(MAX_PREDICTION, round(sum of components)); a
+  // bounded deterministic field that is deliberately NOT the Task 12 risk
+  // score, NOT the Task 15 campaign confidence and NOT the Task 16
+  // investigation confidence. MAX_PREDICTION keeps every prediction below
+  // certainty — predictions never claim 100. Components:
+  //   SIGNAL    = SIGNAL_WEIGHT × min(1, observedSignals / SIGNAL_DIVISOR)
+  //   INTENT    = INTENT_WEIGHT × (1 primary | 0.5 supported | 0 no match)
+  //   CAMPAIGN  = CAMPAIGN_WEIGHT × campaignConfidence / 100 (0 unless the
+  //               action is corroborated by a detected campaign)
+  //   EVIDENCE  = EVIDENCE_WEIGHT × min(1, evidenceItems / EVIDENCE_DIVISOR)
+  //   CORRELATE = CORRELATION_WEIGHT × min(1, relatedCandidates / CORRELATION_DIVISOR)
+  // Sum of maxima = 105 → hard cap at MAX_PREDICTION.
+  CONFIDENCE: {
+    SIGNAL_WEIGHT: 35,
+    SIGNAL_DIVISOR: 3,
+    INTENT_WEIGHT: 25,
+    CAMPAIGN_WEIGHT: 15,
+    EVIDENCE_WEIGHT: 15,
+    EVIDENCE_DIVISOR: 4,
+    CORRELATION_WEIGHT: 15,
+    CORRELATION_DIVISOR: 2,
+  },
+  MAX_SCORE: 100,
+  MAX_PREDICTION: 90,
+  // hard caps so a single request can never emit unbounded playbook output
+  LIMITS: {
+    PREDICTIONS: 6,
+    SIGNALS: 4,
+    LIMITATIONS: 6,
+    RATIONALE_MAX: 500,
+  },
+} as const;
+
+export const REPORT_THRESHOLDS = {
+  // hard caps on merged report uncertainty entries (Task 13 + 16 + 17)
+  LIMITS: {
+    UNCERTAINTIES: 12,
+  },
+  // length bounds enforced on every model-sourced narrative field; the
+  // deterministic builders stay well below these bounds
+  PROSE: {
+    EXECUTIVE_SUMMARY_MAX: 1600,
+    ANALYST_CONCLUSION_MAX: 1200,
+  },
+} as const;

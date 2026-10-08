@@ -4,7 +4,7 @@
 
 ## Status
 
-**PHASE 1 — FOUNDATION: COMPLETED** · **PHASE 2 — AI DETECTION: in progress**
+**PHASE 1 — FOUNDATION: COMPLETED** · **PHASE 2 — AI DETECTION: COMPLETED**
 
 | Phase 1 — Foundation | |
 |---|---|
@@ -27,8 +27,10 @@
 | TASK 14 — Threat Correlation | ✅ |
 | TASK 15 — Campaign Detection | ✅ |
 | TASK 16 — AI Investigation | ✅ |
+| TASK 17 — Adversary Playbook Prediction | ✅ |
+| TASK 18 — AI Investigation Report | ✅ |
 
-Next: **TASK 17**
+**Backend pipeline complete (Tasks 1–18).** Next phase: integration / UI / demo / testing / presentation.
 
 Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
 
@@ -170,6 +172,8 @@ curl -X POST http://localhost:4000/api/candidates \
 | POST | `/api/candidates/:candidateId/analyze/correlation` | Related candidates of the same brand + correlation cluster for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/campaign` | Impersonation campaign detection (type, confidence, indicators) for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/investigation` | AI investigation report (threat intent, confidence, attack path, actions) for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/playbook` | Adversary playbook — predicted next attacker actions for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/report` | Consolidated investigation report (risk + campaign + playbook + narrative) for `SOCIAL`/`APP` candidates |
 
 **Name/handle analysis**
 
@@ -469,6 +473,68 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 - Evidence-based language only — generated prose never contains fake/scam/malicious/definitely/certainly, and recommended actions never propose enforcement (ban/block/takedown/suspend)
 - Failure mapping: missing → **404**, `WEBSITE`/`DOMAIN` → **400** `INVESTIGATION_NOT_APPLICABLE`, orphan → **400** `NO_TARGET_BRAND`
 
+**Adversary playbook prediction**
+
+`SOCIAL` and `APP` candidates only. A deterministic gate table over the same Tasks 11–16 structured results (plus `deriveThreatIntent`) — every prediction cites observed evidence or campaign indicators, and no model is involved anywhere:
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "predictions": [
+      {
+        "action": "CREATE_LOOKALIKE_SOCIAL_ACCOUNT",
+        "confidence": 90,
+        "rationale": "Likely next step: CREATE_LOOKALIKE_SOCIAL_ACCOUNT — predicted from observed evidence (NAME_SIMILARITY, OFFICIAL_IDENTITY_CONFLICT, TEXT_IDENTITY_MATCH); observed intent SUPPORT_SCAM_PATTERN; CROSS_PLATFORM_IMPERSONATION campaign at 100/100; 4 correlated candidates.",
+        "supportingSignals": ["NAME_SIMILARITY", "OFFICIAL_IDENTITY_CONFLICT", "TEXT_IDENTITY_MATCH"]
+      }
+    ],
+    "overallConfidence": 90,
+    "limitations": [ { "issue": "Predictions are probabilistic", "reason": "…" } ]
+  }
+}
+```
+
+- **Actions (fixed vocabulary):** `CREATE_LOOKALIKE_SOCIAL_ACCOUNT` · `CREATE_IMPERSONATION_PAGE` · `DISTRIBUTE_PHISHING_URL` · `PUBLISH_IMPERSONATING_APP` · `EXPAND_CAMPAIGN_TO_NEW_PLATFORM` · `CREATE_FAKE_SUPPORT_ACCOUNT` · `TARGET_VICTIMS_WITH_SUPPORT_LURE` · `DEPLOY_PHISHING_DOMAIN` · `UNKNOWN_NEXT_STEP` (only when nothing else applies)
+- **Gates** reference only existing facts (e.g. impersonation page needs brand material + external domain; phishing-domain deployment needs external domain + HIGH identity and is suppressed for support-lure candidates; campaign expansion needs a detected multi-platform campaign); `supportingSignals` are the fixed pool ∩ observed evidence (cap 4)
+- **`confidence`** (0–90 — predictions never claim certainty, and this is NOT the risk/campaign/investigation confidence): observed signals + intent support + campaign corroboration + evidence breadth + correlation breadth; `overallConfidence` = rounded mean of predictions (0 when empty)
+- **Sort/cap:** confidence desc → campaign-corroborated first → vocabulary order; at most 6 predictions. Official-asset protection suppresses everything: `predictions: []`, `overallConfidence: 0`, plus an "Official asset protection present" limitation
+- **`limitations`** are honest bounds: probabilistic disclaimer always first, then official protection / insufficient evidence / logo unavailable / no shared infrastructure / no coordinated campaign / no correlated candidates / limited coverage (cap 6)
+- Failure mapping: missing → **404**, `WEBSITE`/`DOMAIN` → **400** `PLAYBOOK_NOT_APPLICABLE`, orphan → **400** `NO_TARGET_BRAND`
+
+**AI investigation report**
+
+`SOCIAL` and `APP` candidates only. One consolidated report combining every structured output — Task 12 `riskAssessment`, Task 11 `keyEvidence`, Task 16 `investigation`/`attackPath`/`recommendedActions`, Task 15 `campaign`, Task 17 `predictedNextActions` — plus deterministic `executiveSummary` (exactly four sentences: risk, correlation/campaign, investigation confidence, playbook outlook) and `analystConclusion` (official-protection-bounded / insufficient-evidence / evidence-supports-further-investigation), with merged `uncertainties` (Task 13 why-not-flagged → Task 16 → Task 17, deduplicated, cap 12):
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "generatedAt": "2026-10-08T20:06:25.806Z",
+    "executiveSummary": "PaySecure candidate PaySecure Support is assessed 100/100 CRITICAL with 7 evidence items across 4 independent sources. It correlates with 4 other candidates and a detected CROSS_PLATFORM_IMPERSONATION campaign at 100/100. Investigation confidence is 95/100 (HIGH) with primary intent SUPPORT_SCAM_PATTERN. 6 predicted next actions recorded with overall playbook confidence 90/100.",
+    "targetBrand": { "id": "b1", "name": "PaySecure", "website": "https://paysecure.com", "logoRegistered": false },
+    "candidateAsset": { "id": "c123", "type": "SOCIAL", "value": "@PaySecure_Support", "name": "PaySecure Support", "description": "…", "status": "PENDING" },
+    "riskAssessment": { "riskScore": 100, "riskLevel": "CRITICAL", "confidence": 0.95, "evidenceCount": 7, "independentSourceCount": 4, "reasons": [ "… Task 12 reasons …" ] },
+    "investigation": { "… Task 16 investigation …" },
+    "campaign": { "… Task 15 campaign result …" },
+    "keyEvidence": { "evidenceCount": 7, "highSeverityCount": 3, "evidence": [ "…" ], "unavailable": [ "…" ] },
+    "predictedNextActions": [ "… Task 17 predictions …" ],
+    "attackPath": [ { "step": "Impersonated brand identity", "evidence": "…" } ],
+    "uncertainties": [ { "issue": "Logo evidence unavailable", "reason": "…" } ],
+    "recommendedActions": [ { "priority": "HIGH", "action": "…", "reason": "…" } ],
+    "analystConclusion": "The available evidence supports further investigation of this candidate: risk 100/100 CRITICAL with 7 evidence items, 4 correlated candidates and a CROSS_PLATFORM_IMPERSONATION campaign at 100/100, and investigation confidence 95/100 (HIGH).",
+    "source": "DETERMINISTIC"
+  }
+}
+```
+
+- **Deterministic by default:** same inputs → same report modulo `generatedAt`; `predictedNextActions` is byte-identical to the `/analyze/playbook` endpoint, `investigation` to `/analyze/investigation`, `campaign` to `/analyze/campaign`
+- **AI path (optional):** with `AEGIS_AI_API_KEY`, a validated model pass may rewrite ONLY `executiveSummary`/`analystConclusion` — unknown keys, over-length text, verdict language, enforcement language, or invented domains reject the payload and the deterministic narrative stays; `source` records `"AI"` only for the report prose (`investigation.source` is independent)
+- Structured numbers (risk, confidences, campaign, predictions) can never be model-supplied
+- Failure mapping: missing → **404**, `WEBSITE`/`DOMAIN` → **400** `REPORT_NOT_APPLICABLE`, orphan → **400** `NO_TARGET_BRAND`
+
 ### Response format
 
 - Success: `{ "success": true, "data": ... }` (list endpoints add `count`)
@@ -476,5 +542,5 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 
 ## Roadmap
 
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅ → campaign detection ✅ → AI investigation ✅.
-**Later:** adversary playbook prediction → AI investigation report.
+**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅ → campaign detection ✅ → AI investigation ✅ → adversary playbook prediction ✅ → AI investigation report ✅.
+**Later:** integration, UI, demo, testing, presentation.

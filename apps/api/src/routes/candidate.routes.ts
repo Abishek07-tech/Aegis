@@ -8,6 +8,8 @@ import {
   analyzeCandidateInvestigationHandler,
   analyzeCandidateLogoHandler,
   analyzeCandidateNameHandler,
+  analyzeCandidatePlaybookHandler,
+  analyzeCandidateReportHandler,
   analyzeCandidateRiskHandler,
   analyzeCandidateSocialRiskHandler,
   analyzeCandidateTextHandler,
@@ -55,6 +57,14 @@ candidateRouter.post(
 candidateRouter.post(
   "/:candidateId/analyze/investigation",
   analyzeCandidateInvestigationHandler,
+);
+candidateRouter.post(
+  "/:candidateId/analyze/playbook",
+  analyzeCandidatePlaybookHandler,
+);
+candidateRouter.post(
+  "/:candidateId/analyze/report",
+  analyzeCandidateReportHandler,
 );
 candidateRouter.get("/", listCandidatesHandler);
 candidateRouter.get("/:id", getCandidateHandler);

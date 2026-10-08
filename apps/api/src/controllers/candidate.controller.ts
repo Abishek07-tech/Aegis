@@ -60,6 +60,14 @@ import {
   analyzeCandidateInvestigation,
   type InvestigationFailureCode,
 } from "../services/ai-investigator.service";
+import {
+  analyzeCandidatePlaybook,
+  type PlaybookFailureCode,
+} from "../services/playbook.service";
+import {
+  analyzeCandidateReport,
+  type ReportFailureCode,
+} from "../services/investigation-report.service";
 
 const NAME_ANALYSIS_FAILURE_MESSAGES: Record<
   Exclude<NameAnalysisFailureCode, "CANDIDATE_NOT_FOUND">,
@@ -182,6 +190,26 @@ const INVESTIGATION_FAILURE_MESSAGES: Record<
     "Investigation is only applicable to SOCIAL and APP candidates.",
   NO_TARGET_BRAND:
     "Candidate has no target brand (brandId is missing) — cannot investigate campaign relationships with other candidates.",
+};
+
+const PLAYBOOK_FAILURE_MESSAGES: Record<
+  Exclude<PlaybookFailureCode, "CANDIDATE_NOT_FOUND" | "BRAND_NOT_FOUND">,
+  string
+> = {
+  PLAYBOOK_NOT_APPLICABLE:
+    "Adversary playbook prediction is only applicable to SOCIAL and APP candidates.",
+  NO_TARGET_BRAND:
+    "Candidate has no target brand (brandId is missing) — cannot derive playbook predictions against official assets.",
+};
+
+const REPORT_FAILURE_MESSAGES: Record<
+  Exclude<ReportFailureCode, "CANDIDATE_NOT_FOUND" | "BRAND_NOT_FOUND">,
+  string
+> = {
+  REPORT_NOT_APPLICABLE:
+    "Investigation report generation is only applicable to SOCIAL and APP candidates.",
+  NO_TARGET_BRAND:
+    "Candidate has no target brand (brandId is missing) — cannot generate an investigation report against official assets.",
 };
 
 const readOptionalString = (value: unknown, field: string): string | undefined => {
@@ -542,6 +570,52 @@ export const analyzeCandidateInvestigationHandler = asyncHandler(
         );
       }
       throw ApiError.badRequest(INVESTIGATION_FAILURE_MESSAGES[outcome.code], {
+        code: outcome.code,
+      });
+    }
+
+    res.status(200).json({ success: true, data: outcome.data });
+  },
+);
+
+export const analyzeCandidatePlaybookHandler = asyncHandler(
+  async (req, res) => {
+    const candidateId = req.params.candidateId;
+    const outcome = await analyzeCandidatePlaybook(candidateId);
+
+    if (!outcome.ok) {
+      if (outcome.code === "CANDIDATE_NOT_FOUND") {
+        throw ApiError.notFound(`Candidate not found: ${candidateId}`);
+      }
+      if (outcome.code === "BRAND_NOT_FOUND") {
+        throw ApiError.notFound(
+          "Target brand referenced by the candidate does not exist.",
+        );
+      }
+      throw ApiError.badRequest(PLAYBOOK_FAILURE_MESSAGES[outcome.code], {
+        code: outcome.code,
+      });
+    }
+
+    res.status(200).json({ success: true, data: outcome.data });
+  },
+);
+
+export const analyzeCandidateReportHandler = asyncHandler(
+  async (req, res) => {
+    const candidateId = req.params.candidateId;
+    const outcome = await analyzeCandidateReport(candidateId);
+
+    if (!outcome.ok) {
+      if (outcome.code === "CANDIDATE_NOT_FOUND") {
+        throw ApiError.notFound(`Candidate not found: ${candidateId}`);
+      }
+      if (outcome.code === "BRAND_NOT_FOUND") {
+        throw ApiError.notFound(
+          "Target brand referenced by the candidate does not exist.",
+        );
+      }
+      throw ApiError.badRequest(REPORT_FAILURE_MESSAGES[outcome.code], {
         code: outcome.code,
       });
     }

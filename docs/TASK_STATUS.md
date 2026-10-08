@@ -24,9 +24,11 @@
 - [✓] TASK 14 — Threat Correlation
 - [✓] TASK 15 — Campaign Detection
 - [✓] TASK 16 — AI Investigation
+- [✓] TASK 17 — Adversary Playbook Prediction
+- [✓] TASK 18 — AI Investigation Report
 
-**Current Task:** TASK 16
+**Current Task:** TASK 18
 
 **Status:** COMPLETED
 
-**Next Task:** TASK 17
+**Pipeline:** BACKEND COMPLETE (Tasks 1–18) — next phase: integration / UI / demo / testing / presentation

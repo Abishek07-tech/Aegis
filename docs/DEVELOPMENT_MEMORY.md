@@ -1471,3 +1471,157 @@ Allowed keys: headline, assessment, threatIntent, secondaryIntents, keyFindings,
 - `ATTACK_PATH_STEPS` is the vocabulary boundary; a playbook/tactic mapping must cite existing investigation fields, not invent new evidence
 - Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above; new codes get `details.code` + a message-map entry
 - E2E recipe unchanged: `pg_ctl … start -p 55432`, `setsid env DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
+
+## TASK 17 — ADVERSARY PLAYBOOK PREDICTION (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/playbook` — deterministic prediction of the attacker's likely next actions. Consumes Tasks 11–16 structured results via the shared `assembleInvestigationInput` engine chain (`collectEvidence` → `buildEvidenceResult` → `buildRiskResult` → `buildExplanation` → `buildCorrelationResult` → `computeCampaignAnalysis`) plus `collectFacts`/`deriveThreatIntent` from Task 16 — no detection logic re-run, no new signal, no model input, no persistence, no schema changes, no new dependency.
+
+```
+NEW     src/services/playbook.service.ts          # gate table + derivePlaybook + computePlaybook + analyzeCandidatePlaybook
+CHANGED src/config/constants.ts                   # + PLAYBOOK_THRESHOLDS (CONFIDENCE weights / MAX_PREDICTION / LIMITS)
+CHANGED src/services/ai-investigator.service.ts   # + assembleInvestigationInput extracted (shared by 16/17/18);
+                                                  #   export collectFacts/InvestigationFacts(+identityMed)/clip/plural/proseOk/isPlainObject/exactKeys
+CHANGED src/controllers/candidate.controller.ts    # + analyzeCandidatePlaybookHandler + PLAYBOOK_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts             # + POST /:candidateId/analyze/playbook
+NEW     tests/playbook.pure.cjs                    # 62 pure assertions
+NEW     tests/playbook.e2e.cjs                     # 63 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape
+```json
+{
+  "candidateId": "c1",
+  "predictions": [
+    { "action": "CREATE_LOOKALIKE_SOCIAL_ACCOUNT", "confidence": 90,
+      "rationale": "Likely next step: … — predicted from observed evidence (NAME_SIMILARITY, OFFICIAL_IDENTITY_CONFLICT, TEXT_IDENTITY_MATCH); observed intent SUPPORT_SCAM_PATTERN; CROSS_PLATFORM_IMPERSONATION campaign at 100/100; 4 correlated candidates.",
+      "supportingSignals": ["NAME_SIMILARITY", "OFFICIAL_IDENTITY_CONFLICT", "TEXT_IDENTITY_MATCH"] }
+  ],
+  "overallConfidence": 90,
+  "limitations": [ { "issue": "Predictions are probabilistic", "reason": "…" } ]
+}
+```
+
+### Action vocabulary (fixed order = tie-break) + gate table
+| # | Action | Fires when | Corroborated by campaign | Signal pool (fixed order) |
+|---|---|---|---|---|
+| 0 | `CREATE_LOOKALIKE_SOCIAL_ACCOUNT` | SOCIAL + identity ≥MEDIUM + (campaign OR ≥1 related) | yes | NAME_SIMILARITY, OFFICIAL_IDENTITY_CONFLICT, TEXT_IDENTITY_MATCH, LOGO_SIMILARITY |
+| 1 | `CREATE_IMPERSONATION_PAGE` | brand material ≥MEDIUM + external domain | yes | TEXT_IDENTITY_MATCH, BRAND_TEXT_MATCH, LOGO_SIMILARITY, EXTERNAL_DOMAIN |
+| 2 | `DISTRIBUTE_PHISHING_URL` | external domain + (support lure OR shared SHARED_DOMAIN/SHARED_URL link) | yes | EXTERNAL_DOMAIN, SUPPORT_LANGUAGE, TEXT_IDENTITY_MATCH |
+| 3 | `PUBLISH_IMPERSONATING_APP` | app identity ≥MEDIUM | yes | APP_NAME_SIMILARITY, PACKAGE_IDENTIFIER_SIMILARITY, APP_BRAND_IMPERSONATION, APP_DESCRIPTION_MATCH |
+| 4 | `EXPAND_CAMPAIGN_TO_NEW_PLATFORM` | campaign detected + platformCount ≥2 | yes | campaign indicator types (SHARED_SUSPICIOUS_INFRASTRUCTURE, SHARED_VISUAL_EVIDENCE, CROSS_PLATFORM_PRESENCE, CONSISTENT_BRAND_IMPERSONATION, MULTI_CANDIDATE_CLUSTER) |
+| 5 | `CREATE_FAKE_SUPPORT_ACCOUNT` | support lure + (account identity OR identity HIGH) | no | SUPPORT_LANGUAGE, NAME_SIMILARITY, OFFICIAL_IDENTITY_CONFLICT |
+| 6 | `TARGET_VICTIMS_WITH_SUPPORT_LURE` | support lure + (external domain OR identity HIGH) | no | SUPPORT_LANGUAGE, EXTERNAL_DOMAIN, NAME_SIMILARITY, TEXT_IDENTITY_MATCH |
+| 7 | `DEPLOY_PHISHING_DOMAIN` | external domain + identity HIGH + NOT support lure | no | EXTERNAL_DOMAIN, NAME_SIMILARITY, TEXT_IDENTITY_MATCH, LOGO_SIMILARITY |
+| 8 | `UNKNOWN_NEXT_STEP` | no gate fired AND not official (singleton) | — | [] (fixed placeholder rationale) |
+
+- Gates evaluate a `GateContext` built ONLY from existing facts; signals are the pool ∩ observed evidence (any severity) — for `EXPAND…` the pool ∩ campaign.indicators. `supportingSignals` capped at 4.
+- **Official-asset protection** (`protectiveSignals` ∃ OFFICIAL_ACCOUNT_MATCH/OFFICIAL_APP_MATCH) short-circuits: `predictions: []`, `overallConfidence: 0`, official-protection limitation.
+
+### Prediction confidence (PLAYBOOK_THRESHOLDS.CONFIDENCE — deliberately distinct from Tasks 12/15/16 scores)
+```
+confidence = min(90, round(
+    35 × min(1, observedSignals / 3)
+  + 25 × intentSupport              // 1 primary | 0.5 supported | 0
+  + 15 × campaignConfidence / 100   // ONLY for campaign-corroborated actions, else 0
+  + 15 × min(1, evidenceItems / 4)
+  + 15 × min(1, relatedCandidates / 2)
+))
+overallConfidence = round(mean(prediction confidences)), 0 when empty
+```
+- Sum of maxima = 105 → hard cap `MAX_PREDICTION: 90` (predictions never claim certainty). NOT the Task 12 risk score, NOT the Task 12 0..1 confidence, NOT the Task 15 campaign confidence, NOT the Task 16 investigation confidence; never model-supplied.
+- Intent sets per action; `intentSupport` = 1 when `deriveThreatIntent().primary` ∈ set, else 0.5 when any `supported` ∈ set.
+- Sort: confidence desc → campaign-corroborated desc → vocabulary order; cap `PREDICTIONS: 6`.
+
+### Rationale + limitations
+- Rationale template: `Likely next step: <action> — predicted from observed evidence (<signals>)` + `; observed intent <primary>` (when intentSupport > 0) + `; <type> campaign at <conf>/100` (corroborated + detected) + `; <n> correlated candidate(s)` + `.`, clipped to `RATIONALE_MAX: 500`. `UNKNOWN_NEXT_STEP` uses a fixed placeholder sentence. Raw underscored enums are FORBIDDEN_PROSE-safe (`_` is a word character).
+- Limitations in fixed order, cap 6: Predictions are probabilistic (always first) → Official asset protection present → Insufficient evidence for a specific prediction (unknown used) → Logo evidence unavailable (Task 11 reason verbatim) → No shared infrastructure evidence → No coordinated campaign detected (Task 15 explanation verbatim) → No correlated candidates → Limited evidence coverage (<3 items).
+- Pins: c1 → 6×90 `[LOOKALIKE, PAGE, DISTRIBUTE, EXPAND, FAKE_SUPPORT, TARGET_LURE]` overall **90** (DEPLOY gated off by support lure); app1 → `[PUBLISH 90, EXPAND 90, PAGE 81, DISTRIBUTE 81, DEPLOY 78]` overall **84**; fan → `[LOOKALIKE 90]` overall **90**; harmless → `[UNKNOWN 0]` overall **0**; official → `[]` overall **0**.
+
+### API + failure mapping (same pattern as Tasks 6–16)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `PLAYBOOK_NOT_APPLICABLE` | **400** | Adversary playbook prediction is only applicable to SOCIAL and APP candidates. + `details.code` |
+| `NO_TARGET_BRAND` | **400** | Candidate has no target brand … + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | Target brand referenced by the candidate does not exist. |
+
+### Test results (Task 17)
+- **Pure 62/62**: key sets exact; c1/app1/fan/harmless/official action-order + confidence + overall pins; rationale template/cap/placeholder; supporting-signal contents (incl. EXPAND uses indicator types) + cap 4; limitation orders per fixture + logo reason from Task 11 + no-campaign text from Task 15; confidence integers in [0,90], descending, rounded-mean overall; tie-breaks (corroborated first, vocabulary order); gate honesty (no DEPLOY for support lure, app1 DEPLOY present, no external-domain actions for fan, every signal observed in inputs); determinism (reversed input byte-identical, no timestamps); prose hygiene (no verdicts/enforcement); computePlaybook == derivePlaybook
+- **E2E 63/63**: exact key sets; c1/app1 pins live; rationale + cap hygiene; fan/harmless/official behavior incl. official-app suppression; **cross-endpoint parity** `report.predictedNextActions == playbook endpoint output`; failure paths (404 + 400 `PLAYBOOK_NOT_APPLICABLE`/`NO_TARGET_BRAND` + GET → 404); byte-identical repeat; **Task 6–16 endpoint regressions** all unchanged
+- `npm run typecheck` / `npm run build` → **pass**
+
+## TASK 18 — AI INVESTIGATION REPORT (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/report` — single deterministic investigation report combining Tasks 6–17 structured results (`riskAssessment` ← Task 12, `keyEvidence` ← Task 11, `investigation`/`attackPath`/`recommendedActions` ← Task 16, `campaign` ← Task 15, `predictedNextActions` ← Task 17, merged `uncertainties` ← Tasks 13+16+17), with an optional validated AI prose pass over ONLY `executiveSummary`/`analystConclusion`. No detection logic, no schema changes, no new dependency.
+
+```
+NEW     src/services/investigation-report.service.ts # buildDeterministicReport + runReport + parser + entry points
+CHANGED src/config/constants.ts                      # + REPORT_THRESHOLDS (LIMITS.UNCERTAINTIES 12 / PROSE caps 1600+1200)
+CHANGED src/controllers/candidate.controller.ts       # + analyzeCandidateReportHandler + REPORT_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts                # + POST /:candidateId/analyze/report
+NEW     tests/report.pure.cjs                         # 97 pure assertions
+NEW     tests/report.e2e.cjs                          # 77 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape (key order fixed)
+```json
+{
+  "candidateId": "c1",
+  "generatedAt": "2026-10-08T20:06:25.806Z",
+  "executiveSummary": "<exactly 4 deterministic sentences>",
+  "targetBrand": { "id", "name", "website", "logoRegistered" },
+  "candidateAsset": { "id", "type", "value", "name", "description", "status" },
+  "riskAssessment": { "riskScore", "riskLevel", "confidence", "evidenceCount", "independentSourceCount", "reasons" },
+  "investigation": { "…Task 16 Investigation verbatim…" },
+  "campaign": { "…Task 15 CampaignResult verbatim…" },
+  "keyEvidence": { "evidenceCount", "highSeverityCount", "evidence", "unavailable" },
+  "predictedNextActions": [ { "action", "confidence", "rationale", "supportingSignals" } ],
+  "attackPath": [ { "step", "evidence" } ],
+  "uncertainties": [ { "issue", "reason" } ],
+  "recommendedActions": [ { "priority", "action", "reason" } ],
+  "analystConclusion": "<deterministic, evidence-bounded>",
+  "source": "DETERMINISTIC"
+}
+```
+
+### Deterministic narrative
+- `executiveSummary` = exactly 4 sentences: (1) brand + candidate label + risk/100 + level + evidence items across independent sources (+ protective-signals clause when present); (2) correlation/campaign context (related + campaign / related-only / campaign-only / none); (3) `Investigation confidence is <n>/100 (<level>) with primary intent <intent>`; (4) playbook outlook (prediction count + overallConfidence, or the no-predictions sentence). Safe sentence splitting: periods inside domain-like values are never followed by a space. Clipped to 1600.
+- `analystConclusion` branches: official → protection-bounded monitoring sentence citing protective signals; 0 evidence → insufficient-evidence + monitoring sentence; else → "The available evidence supports further investigation…" citing risk, evidence items, correlated candidates, campaign, investigation confidence. Clipped to 1200.
+- `uncertainties` merge (dedupe by issue, first wins, cap 12): Task 13 `whyNotFlagged` (`issue = signal`) → Task 16 `investigation.uncertainties` → Task 17 `playbook.limitations`.
+
+### AI prose path (mirrors Task 16 discipline)
+- `runReport(input, provider?)`: same resolved provider feeds `runInvestigation` (Task 16 prose) and the report pass; playbook always `derivePlaybook` (deterministic).
+- `buildReportProviderRequest` — compact structured facts only (candidate/brand/risk/keyEvidence/investigation/correlation/campaign/playbook + sorted `allowedDomains` + keys hint + rules); no secrets.
+- `parseAIReportResponse`: keys MUST be ⊆ `{executiveSummary, analystConclusion}` (≥1 key); each value through `proseOk` with `REPORT_THRESHOLDS.PROSE` caps → invalid JSON / non-object / empty / unknown or extra keys / wrong type / over-length / verdict language / enforcement language / invented domain → `null` → full deterministic fallback (source stays DETERMINISTIC). Accept → `{...base, ...parsed, source: "AI"}` — all structured fields remain byte-identical.
+- `report.source` reflects REPORT prose only; `report.investigation.source` is independent (a payload valid for the investigation parser but not the report parser yields AI investigation + DETERMINISTIC report — covered by a dedicated test).
+
+### API + failure mapping (same pattern as Tasks 6–17)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `REPORT_NOT_APPLICABLE` | **400** | Investigation report generation is only applicable to SOCIAL and APP candidates. + `details.code` |
+| `NO_TARGET_BRAND` | **400** | Candidate has no target brand … + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | Target brand referenced by the candidate does not exist. |
+
+### Test results (Task 18)
+- **Pure 97/97**: top-level keys + insertion order; four-sentence summary pins per fixture (incl. 84/100 app overall, related-only fan, zero-evidence harmless, protective official); risk/keyEvidence/investigation/campaign/predictions/attackPath/actions mirror their Task inputs byte-for-byte; merged-uncertainty order/dedup/cap; targetBrand/candidateAsset projections; deterministic repeat + reversed-input modulo `generatedAt`; accepted AI merge (prose adopted, 8 structured fields untouched); 12 rejection classes + throw + null-provider fallback (modulo `generatedAt`); investigation-prose-only payload keeps deterministic report prose; parser unit matrix + prompt hygiene (rules stated, keys hint, allowed domains, no secrets); prose hygiene (no verdicts/enforcement, fixture-domains only, prose caps)
+- **E2E 77/77**: exact key set + order; four-sentence summary pins; risk/keyEvidence mirror live Task 11/12 endpoints; investigation/attackPath/actions mirror live Task 16; campaign mirrors live Task 15; **predictions mirror live Task 17 endpoint** (cross-endpoint parity for c1 + app1); uncertainty merge; fan/weak/official narrative branches incl. official-app suppression; prose hygiene; failure paths (404 + 400 `REPORT_NOT_APPLICABLE`/`NO_TARGET_BRAND` + GET → 404); deterministic repeat modulo `generatedAt`; **Task 6–17 endpoint regressions** all unchanged
+- `npm run typecheck` / `npm run build` → **pass**
+- Combined suites: **738 pure + 597 e2e = 1335 assertions, all green** (`npm test` / `npm run test:e2e` now chain playbook + report)
+
+### Database testing (Tasks 17–18)
+- Same ephemeral PostgreSQL recipe (cluster `/tmp/opencode/pgdata`, port 55432, server port 4100 via `setsid`, PID file `/tmp/opencode/server.pid`); real `.env` untouched; server + cluster stopped after tests (verified no `dist/server.js` process remains)
+
+### Limitations (recorded honestly)
+- Predictions are heuristic gate outcomes over existing evidence — not a trained or simulated adversary model; `UNKNOWN_NEXT_STEP` exists precisely so nothing is invented when evidence is thin
+- Official-asset protection suppresses ALL predictions (by design) — an official account can never be predicted to be attacked under its own brand's playbook
+- The report's AI path is exercised ONLY with mocked providers — no live LLM call is ever made; without `AEGIS_AI_API_KEY` every report is `source: "DETERMINISTIC"` byte-identical modulo `generatedAt`
+- `executiveSummary`/`analystConclusion` are rewritten by the model only when every validation rule passes; structured numbers (risk, confidence, campaign, predictions) can never be model-supplied
+- Report has no persistence/history: `generatedAt` is per-request; the same inputs always reproduce the same report (modulo timestamp)
+
+### PIPELINE STATUS
+- **Tasks 1–18 all COMPLETED** — the backend feature pipeline is complete. Remaining work is integration/UI/demo/testing/presentation; no further backend features are planned.

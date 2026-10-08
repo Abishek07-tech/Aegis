@@ -206,10 +206,10 @@ const DOMAIN_TOKEN_PATTERN = /\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+\b/gi
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-const clip = (value: string, max: number): string =>
+export const clip = (value: string, max: number): string =>
   value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`;
 
-const plural = (count: number, noun: string): string =>
+export const plural = (count: number, noun: string): string =>
   `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 const typeLabel = (campaignType: CampaignType): string =>
@@ -237,7 +237,7 @@ export const getInvestigationConfidenceLevel = (
 // Facts + threat intent + investigation confidence (deterministic)
 // ---------------------------------------------------------------------------
 
-interface InvestigationFacts {
+export interface InvestigationFacts {
   type: "SOCIAL" | "APP";
   value: string;
   name: string | null;
@@ -248,13 +248,14 @@ interface InvestigationFacts {
   supportLure: boolean;
   externalDomain: boolean;
   identityHigh: boolean;
+  identityMed: boolean;
   brandMaterial: boolean;
   accountIdentity: boolean;
   campaignType: CampaignType | null;
   campaignBrandImpersonation: boolean;
 }
 
-const collectFacts = (input: AIInvestigatorInput): InvestigationFacts => {
+export const collectFacts = (input: AIInvestigatorInput): InvestigationFacts => {
   const { evidence, explanation, campaign } = input;
   const items = evidence.evidence;
   const protectiveSignals = explanation.protectiveSignals;
@@ -285,6 +286,7 @@ const collectFacts = (input: AIInvestigatorInput): InvestigationFacts => {
     // presence (any severity) is the infrastructure observation.
     externalDomain: present("EXTERNAL_DOMAIN"),
     identityHigh: presentAny(IDENTITY_RESEMBLANCE_SIGNALS, "HIGH"),
+    identityMed: presentAny(IDENTITY_RESEMBLANCE_SIGNALS, "MEDIUM"),
     brandMaterial: presentAny(BRAND_MATERIAL_SIGNALS, "MEDIUM"),
     accountIdentity:
       evidence.type === "SOCIAL" && presentAny(ACCOUNT_IDENTITY_SIGNALS, "MEDIUM"),
@@ -1138,15 +1140,15 @@ export const buildProviderRequest = (
   return { system: SYSTEM_PROMPT, user: JSON.stringify(prompt) };
 };
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const exactKeys = (value: Record<string, unknown>, expected: string[]): boolean => {
+export const exactKeys = (value: Record<string, unknown>, expected: string[]): boolean => {
   const keys = Object.keys(value).sort();
   return keys.length === expected.length && expected.every((key) => keys.includes(key));
 };
 
-const proseOk = (
+export const proseOk = (
   value: unknown,
   max: number,
   context: AIValidationContext,
@@ -1380,17 +1382,17 @@ export const runInvestigation = async (
 // ---------------------------------------------------------------------------
 
 /**
- * Assembles the Task 11–15 structured results for one candidate and runs the
- * investigation layer over them. Existing engines are invoked exactly as the
- * other analyze endpoints invoke them — no value is recomputed or overridden.
+ * Assembles the Task 11–15 structured results for one candidate — the exact
+ * engine chain the investigation, playbook and report layers all consume.
+ * Existing engines are invoked exactly as the other analyze endpoints invoke
+ * them — no value is recomputed or overridden.
  */
-export const computeInvestigation = async (
+export const assembleInvestigationInput = async (
   subject: CandidateAsset,
   brand: Brand,
   assets: OfficialAsset[],
   candidates: CandidateAsset[],
-  provider?: AIProvider | null,
-): Promise<InvestigationResult> => {
+): Promise<AIInvestigatorInput> => {
   const type = subject.type.trim().toUpperCase() as "SOCIAL" | "APP";
   const { items, unavailable } = await collectEvidence(subject, brand, assets, type);
   const evidence = buildEvidenceResult(subject.id, type, items, unavailable);
@@ -1399,7 +1401,7 @@ export const computeInvestigation = async (
   const correlation = await buildCorrelationResult(subject, brand, assets, candidates);
   const campaign = await computeCampaignAnalysis(subject, brand, assets, candidates);
 
-  const input: AIInvestigatorInput = {
+  return {
     candidate: subject,
     brand,
     officialAssets: assets,
@@ -1409,6 +1411,16 @@ export const computeInvestigation = async (
     correlation,
     campaign,
   };
+};
+
+export const computeInvestigation = async (
+  subject: CandidateAsset,
+  brand: Brand,
+  assets: OfficialAsset[],
+  candidates: CandidateAsset[],
+  provider?: AIProvider | null,
+): Promise<InvestigationResult> => {
+  const input = await assembleInvestigationInput(subject, brand, assets, candidates);
 
   return {
     candidateId: subject.id,
