@@ -1,0 +1,3 @@
+import { Activity, ArrowUpRight, ShieldAlert, Users, Bug, Globe2, Layers3, Database } from 'lucide-react'
+const icons=[Activity,ShieldAlert,Users,Bug,Globe2,Layers3,Database]
+export default function MetricGrid({metrics,onSelect}){return <div className="kpi-grid">{metrics.map(([name,value,trend],i)=>{const Icon=icons[i]||Activity;return <button className={`kpi-card kpi-${i}`} key={name} onClick={()=>onSelect?.(name)}><span className="kpi-top"><i><Icon size={16}/></i><small>{i===0?'POSTURE':'MOCK DATA'}</small></span><span className="kpi-name">{name}</span><strong>{value}</strong><span className="kpi-trend">{i<5&&<ArrowUpRight size={12}/>} {trend}</span></button>})}</div>}

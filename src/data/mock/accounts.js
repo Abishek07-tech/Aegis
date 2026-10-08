@@ -1,0 +1,7 @@
+const timestamps={createdAt:'2026-10-08T08:00:00.000Z',updatedAt:'2026-10-08T09:16:00.000Z'}
+export const accountMock=[
+ {id:'ACC-001',username:'@PaySecure_Support',platform:'X',profileName:'PaySecure Customer Support',followers:'2.4K',age:'12 days',similarity:96,usernameSimilarity:97,logoSimilarity:94,bioSimilarity:91,linkSimilarity:96,confidence:94,risk:96,severity:'Critical',status:'Critical',domain:'paysecure-login-demo.example',...timestamps},
+ {id:'ACC-002',username:'@PaySecure_Verify',platform:'Instagram',profileName:'PaySecure Verification',followers:'4.2K',age:'8 days',similarity:93,usernameSimilarity:93,logoSimilarity:89,bioSimilarity:90,linkSimilarity:92,confidence:94,risk:91,severity:'Critical',status:'Critical',domain:'paysecure-verify-demo.example',...timestamps},
+ {id:'ACC-003',username:'@PaySecure_Careers',platform:'LinkedIn',profileName:'PaySecure Careers',followers:'2.1K',age:'3 years',similarity:89,usernameSimilarity:89,logoSimilarity:88,bioSimilarity:91,linkSimilarity:84,confidence:12,risk:8,severity:'Low',status:'Legitimate',domain:'careers.paysecure.example',...timestamps},
+ {id:'ACC-004',username:'@PaySecureHelp',platform:'Facebook',profileName:'PaySecure Help Center',followers:'813',age:'4 days',similarity:88,usernameSimilarity:88,logoSimilarity:75,bioSimilarity:84,linkSimilarity:89,confidence:86,risk:82,severity:'High',status:'Review',domain:'help-paysecure-demo.example',...timestamps},
+]

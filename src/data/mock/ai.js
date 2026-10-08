@@ -1,0 +1,2 @@
+const timestamps={createdAt:'2026-10-08T08:00:00.000Z',updatedAt:'2026-10-08T09:16:00.000Z'}
+export const aiMock=[{id:'AI-001',threatId:'THR-8821',threat:'@PaySecure_Support',classification:'Brand Impersonation',confidence:96,risk:94,evidence:['Username similarity','Logo similarity','Bio similarity','Domain relationship','Recent account creation'],reasoning:'Multiple identity and infrastructure signals in this demonstration record resemble the monitored brand identity.',recommendation:'Investigate and initiate a platform takedown workflow if confirmed.',...timestamps}]
