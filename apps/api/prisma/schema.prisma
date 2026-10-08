@@ -1,0 +1,54 @@
+// Aegis database schema — Prisma 7
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Connection URL comes from DATABASE_URL via prisma7.config.ts
+}
+
+model Brand {
+  id        String   @id @default(cuid())
+  name      String
+  logoUrl   String?
+  website   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets     OfficialAsset[]
+  candidates CandidateAsset[]
+}
+
+model OfficialAsset {
+  id        String   @id @default(cuid())
+  brandId   String
+  type      String
+  value     String
+  createdAt DateTime @default(now())
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@index([brandId])
+  @@index([type])
+}
+
+model CandidateAsset {
+  id          String   @id @default(cuid())
+  type        String
+  value       String
+  name        String?
+  description String?
+  brandId     String?
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  brand Brand? @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([brandId])
+}
