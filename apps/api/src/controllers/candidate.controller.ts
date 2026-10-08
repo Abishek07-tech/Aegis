@@ -52,6 +52,10 @@ import {
   analyzeCandidateCorrelation,
   type CorrelationFailureCode,
 } from "../services/correlation.service";
+import {
+  analyzeCandidateCampaign,
+  type CampaignFailureCode,
+} from "../services/campaign.service";
 
 const NAME_ANALYSIS_FAILURE_MESSAGES: Record<
   Exclude<NameAnalysisFailureCode, "CANDIDATE_NOT_FOUND">,
@@ -154,6 +158,16 @@ const CORRELATION_FAILURE_MESSAGES: Record<
     "Correlation analysis is only applicable to SOCIAL and APP candidates.",
   NO_TARGET_BRAND:
     "Candidate has no target brand (brandId is missing) — cannot correlate against other candidates of the brand.",
+};
+
+const CAMPAIGN_FAILURE_MESSAGES: Record<
+  Exclude<CampaignFailureCode, "CANDIDATE_NOT_FOUND" | "BRAND_NOT_FOUND">,
+  string
+> = {
+  CAMPAIGN_NOT_APPLICABLE:
+    "Campaign analysis is only applicable to SOCIAL and APP candidates.",
+  NO_TARGET_BRAND:
+    "Candidate has no target brand (brandId is missing) — cannot analyze campaign relationships with other candidates.",
 };
 
 const readOptionalString = (value: unknown, field: string): string | undefined => {
@@ -468,6 +482,29 @@ export const analyzeCandidateCorrelationHandler = asyncHandler(
         );
       }
       throw ApiError.badRequest(CORRELATION_FAILURE_MESSAGES[outcome.code], {
+        code: outcome.code,
+      });
+    }
+
+    res.status(200).json({ success: true, data: outcome.data });
+  },
+);
+
+export const analyzeCandidateCampaignHandler = asyncHandler(
+  async (req, res) => {
+    const candidateId = req.params.candidateId;
+    const outcome = await analyzeCandidateCampaign(candidateId);
+
+    if (!outcome.ok) {
+      if (outcome.code === "CANDIDATE_NOT_FOUND") {
+        throw ApiError.notFound(`Candidate not found: ${candidateId}`);
+      }
+      if (outcome.code === "BRAND_NOT_FOUND") {
+        throw ApiError.notFound(
+          "Target brand referenced by the candidate does not exist.",
+        );
+      }
+      throw ApiError.badRequest(CAMPAIGN_FAILURE_MESSAGES[outcome.code], {
         code: outcome.code,
       });
     }

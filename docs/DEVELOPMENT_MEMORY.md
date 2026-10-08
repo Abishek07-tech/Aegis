@@ -1246,3 +1246,118 @@ CHANGED package.json, docs/*, README.md
 - Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above; new codes get `details.code` + message entry in `CORRELATION_FAILURE_MESSAGES`-style maps
 - E2E recipe unchanged: ephemeral cluster `pg_ctl … start -p 55432`, `setsid env DATABASE_URL=… PORT=4100 node dist/server.js` (survives shell timeout), `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
 - `normalizeUrl`/`extractUrls` now live in social-risk.service.ts — reuse them instead of re-implementing URL parsing
+
+## TASK 15 — CAMPAIGN DETECTION (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/campaign` — a higher-level interpretation of Task 14 correlation: answers "do these connected assets form one coordinated impersonation campaign?". Consumes the correlation engine (cluster + `correlateFingerprints` + fingerprints carrying Task 11 evidence); re-runs NO detection logic (name/text/logo/social/app/evidence/risk/explanation). Deterministic, no LLM, no persistence, no schema changes, no risk-score reuse.
+
+```
+NEW     src/services/campaign.service.ts       # buildCampaignResult + computeCampaignAnalysis + analyzeCandidateCampaign + getCampaignConfidenceLevel + deriveCampaignId
+CHANGED src/config/constants.ts                # + CAMPAIGN_THRESHOLDS (MIN_RELATIONSHIP_SCORE / CONFIDENCE weights / MAX_SCORE / LEVEL reuse)
+CHANGED src/services/correlation.service.ts    # strongBrandSignals exported (inspection only — no correlation logic copied)
+CHANGED src/controllers/candidate.controller.ts # + analyzeCandidateCampaignHandler + CAMPAIGN_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts         # + POST /:candidateId/analyze/campaign
+NEW     tests/campaign.pure.cjs                # 70 pure assertions
+NEW     tests/campaign.e2e.cjs                 # 56 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape
+```json
+{
+  "candidateId": "...", "campaignDetected": true,
+  "campaign": {
+    "campaignId": "camp_130c65f8", "campaignType": "CROSS_PLATFORM_IMPERSONATION",
+    "confidenceScore": 100, "confidenceLevel": "VERY_HIGH",
+    "candidateIds": ["...", "..."],
+    "assetCount": 4, "platformCount": 3, "socialAssetCount": 2, "appAssetCount": 1,
+    "domainCount": 1, "websiteCount": 0, "relatedCandidateCount": 3,
+    "firstSeen": "…ISO", "lastSeen": "…ISO", "durationDays": 0,
+    "relationships": [ { "candidateId", "relationshipScore", "relationshipLevel", "links": [...] } ],
+    "indicators": [ { "type", "strength", "explanation" } ]
+  },
+  "explanation": "4 candidate assets (2 social, 1 app, 1 domain) are linked by the same external domain evil-pay.com and share strong brand-impersonation evidence across social and app channels. The evidence is consistent with a coordinated impersonation campaign — campaign confidence 100/100 (VERY_HIGH)."
+}
+```
+No campaign: `{ candidateId, campaignDetected: false, campaign: null, explanation: "No meaningful multi-asset correlation was found." }` (exact spec text).
+
+### Campaign grouping (consumes Task 14, no second graph algorithm)
+1. **Cluster:** Task 14's `correlateFingerprints` BFS over same-brand candidates (exact-official subjects/peers already excluded, official domains/URLs already filtered out of fingerprints).
+2. **Membership:** the *same deterministic BFS* re-run on the subgraph of edges ≥ `MIN_RELATIONSHIP_SCORE` (45) — weak brand-lookalike links (e.g. shared branding alone at 30) can sit in the correlation cluster but can NEVER pull a candidate into a campaign (fan/look-alike protection).
+3. **Edges:** all pairwise campaign edges recomputed via Task 14's exported pure `correlateFingerprints` (one call per member over cluster members, deduped on unordered id pairs) — zero duplicated signal calculation. `relationships` = the subject's campaign edges, same shape as the correlation endpoint (pure test asserts equality with correlation output filtered to campaign members).
+4. **Detection gates (all must hold):** ≥2 members AND ≥1 campaign edge carrying coordination evidence: `SHARED_DOMAIN` / `SHARED_URL` (suspicious infrastructure — official domains can never appear) or `SHARED_VISUAL_EVIDENCE` (shared stolen visual brand material; synthetic-only today, no candidate logo field).
+
+### Campaign confidence formula (CAMPAIGN_THRESHOLDS.CONFIDENCE — NOT the Task 12 risk score)
+```
+confidenceScore = min(100, round(
+    25 × min(1, (members − 1) / 2)              // scale: 2→12.5, 3+→25
+  + 25 × mean(campaign edge scores) / 100       // relationship strength
+  + 20 × min(1, signalFamilies / 3)             // independent link diversity
+  + 15 × [any edge shares a domain/URL]         // shared suspicious infrastructure
+  + 10 × [social ≥1 AND app ≥1]                 // cross-platform presence
+  + 20 × (members with HIGH impersonation evidence / SOCIAL+APP members)
+))
+```
+- Sum of maxima = 115 → hard cap 100. Levels reuse the correlation ladder: LOW 0–24 / MEDIUM 25–49 / HIGH 50–74 / VERY_HIGH 75–100 (`CAMPAIGN_THRESHOLDS.LEVEL = CORRELATION_THRESHOLDS.LEVEL`).
+- **Anti-double-count:** signal families collapse `SHARED_DOMAIN` + `SHARED_URL` into ONE infrastructure family (brand, visual, strong-signals are the other families); edge means use Task 14's already-damped scores (domain+URL pair contributes 56, not 90); DOMAIN/WEBSITE members are excluded from the evidence-ratio denominator (evidence not applicable to them).
+- Pinned test: domain+URL+strong-signals pair = edge 76, families 2 → confidence exactly **60** (naive family count would give 67, undamped edge would give 66).
+
+### Campaign types (first match wins — derived only after gates pass)
+| Condition on campaign members | Type |
+|---|---|
+| social ≥1 AND app ≥1 | `CROSS_PLATFORM_IMPERSONATION` |
+| social only (no DOMAIN/WEBSITE) | `SOCIAL_IMPERSONATION` |
+| app only (no DOMAIN/WEBSITE) | `APP_IMPERSONATION` |
+| social/app mixed with DOMAIN/WEBSITE members | `MULTI_ASSET_BRAND_IMPERSONATION` |
+| neither (DOMAIN/WEBSITE only — unreachable via the API, defensive) | `SHARED_INFRASTRUCTURE` |
+
+### Indicators (fixed emission order, every one references real data)
+1. `SHARED_SUSPICIOUS_INFRASTRUCTURE` — actual shared external domains/URLs (counted across ≥2 members) + brand name; strength = strongest infra link.
+2. `SHARED_VISUAL_EVIDENCE` — HIGH logo similarity to the official logo (synthetic-only today).
+3. `CROSS_PLATFORM_PRESENCE` — social + app counts; always STRONG when present.
+4. `CONSISTENT_BRAND_IMPERSONATION` — `withIdentity ≥ 2` SOCIAL/APP members with HIGH non-protective IDENTITY/CONTENT evidence (`strongBrandSignals` from Task 14); lists the actual signal names + brand; STRONG when all eligible members qualify, else MEDIUM.
+5. `MULTI_CANDIDATE_CLUSTER` — members ≥3; strongest relationship score cited; STRONG at ≥4 else MEDIUM.
+
+### Campaign ID
+`deriveCampaignId` = FNV-1a 32-bit over `sorted(memberIds).join("|")` → `camp_${hex8}`. Same member set → same id from every member's perspective and in any input order; different sets → different id; no DB, no randomness.
+
+### Timeline / impact
+- `firstSeen`/`lastSeen` = min/max of member `createdAt` as ISO strings; `durationDays` = floor((last − first)/86400000). If ANY member's timestamp is missing → all three are `null` (never fabricated).
+- Impact = actual schema counts only: `assetCount`, `platformCount` (distinct types), `socialAssetCount`, `appAssetCount`, `domainCount`, `websiteCount`, `relatedCandidateCount` (= relationships length).
+
+### False-positive protection (all pure + e2e tested)
+- Same brand alone → no links → no campaign. Similar names / shared branding → only a 30-weight edge → below membership threshold → no campaign and fan/look-alike candidates never join an otherwise-strong campaign.
+- Official subjects (exact identity) → Task 14 cluster = self only → no campaign; exact-official peers are never in any cluster; official-domain references are filtered out of fingerprints before Task 14 runs (shared official domain can never be "shared suspicious infrastructure").
+- Individual risk score plays NO part anywhere (output contains no riskScore/riskLevel — asserted).
+- Evidence-based language only: explanations must contain "The evidence is consistent with a coordinated impersonation campaign"; generated text never contains fake/scam/malicious (regex-asserted over every explanation + indicator).
+
+### API + failure mapping (same pattern as Tasks 6–14)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `CAMPAIGN_NOT_APPLICABLE` | **400** | `Campaign analysis is only applicable to SOCIAL and APP candidates.` + `details.code` |
+| `NO_TARGET_BRAND` | **400** | `Candidate has no target brand …` + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | `Target brand referenced by the candidate does not exist.` |
+
+### Test results (Task 15)
+- **Pure 70/70**: domain pair → detected SOCIAL_IMPERSONATION 45/MEDIUM with infra indicator + explanation citing domain/counts/confidence; three-candidate infrastructure → one campaign (same campaignId from every member) 58/HIGH; cross-platform social+app → CROSS_PLATFORM_IMPERSONATION 90/VERY_HIGH with cross indicator + "across social and app channels"; unrelated → no campaign; same brand alone → no; official subject → no; official-domain-only refs → no; brand-only edge → no (threshold); family-dedup pin **60** (not 62/66/67); deterministic recompute byte-identical; reversed input byte-identical + subject-first + relationship ordering; campaign id format `camp_[0-9a-f]{8}` + sorted-set stable + different members → different id + same id from any subject; timeline 2026-01-01→2026-01-03 = 2 days; any-missing timestamp → all null; explanation references real domain + counts + confidence + evidence-based closing; indicators carry real signal names; no fake/scam/malicious; no risk fields; single candidate → no; fan excluded from members AND relationships of a strong campaign; **integration via `computeCampaignAnalysis`** on real-shaped fixtures → campaign [c1,c2,ew] MULTI_ASSET_BRAND_IMPERSONATION 88/VERY_HIGH, fan/harmless/official subjects → no campaign, relationships == correlation relatedCandidates filtered to campaign, input-order independent
+- **E2E 56/56**: valid 4-asset cross-platform campaign (exact top-level/campaign/indicator/relationship/link key sets) type CROSS_PLATFORM_IMPERSONATION confidence 100/VERY_HIGH, members `[s1,s2,app1,ew]` subject-first, all 7 impact counts exact, relationships `[s2:86, app1:86, ew:45]`, 4 indicators (all STRONG) with real domains/signals in explanations, real ISO timeline + durationDays ≥0, explanation cites domain/counts/confidence + no forbidden verdicts; same campaignId from social + app members; fan/harmless/official social/official app → exact no-campaign shape; officials/fan/harmless excluded from members; WEBSITE → 400 `CAMPAIGN_NOT_APPLICABLE`; missing → 404; orphan → 400 `NO_TARGET_BRAND`; GET → 404; deterministic repeat byte-identical; **Task 6–14 endpoint regressions** (name/text/logo/social-risk/app-risk/evidence/risk/explanation/correlation) + correlation cluster ⊇ campaign members
+- `npm run typecheck` / `npm run build` → **pass**
+- Combined suites: **429 pure + 385 e2e = 814 assertions, all green** (`npm test` / `npm run test:e2e` now chain campaign)
+
+### Database testing (Task 15)
+- Same ephemeral PostgreSQL recipe (cluster `/tmp/opencode/pgdata`, port 55432, server port 4100 via `setsid`, PID file `/tmp/opencode/server.pid`); real `.env` untouched; server + cluster stopped after tests (verified port closed)
+
+### Limitations (recorded honestly)
+- `SHARED_VISUAL_EVIDENCE` gate/indicator cannot fire on real data today (candidate schema has no logo field) — synthetic pure-test only
+- Campaigns are brand-scoped (Task 14's universe) — cross-brand campaign correlation is not attempted; campaigns are computed per request, never persisted (no campaign table, no history/timeline tracking over time)
+- The confidence weights/levels are documented heuristics, not calibrated against labeled campaign data; `durationDays` for same-day campaigns is 0
+- Edge recomputation re-invokes `correlateFingerprints` once per cluster member (O(k²) pairwise work per member) — fine at prototype scale, would want a shared graph cache at production scale
+- Detection requires shared infrastructure (or shared visual material) by design: independent parallel fakes that merely resemble the brand are treated as separate candidates, not one campaign — documented FP trade-off
+
+### Notes for Task 16 (AI Investigation)
+- Campaign output is read-only computed intelligence — surface it through the investigation layer; do not re-score, and do not treat `confidenceScore` as a risk score
+- Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above; new codes get `details.code` + a message-map entry
+- E2E recipe unchanged: `pg_ctl … start -p 55432`, `setsid env DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
+- `deriveCampaignId` gives a stable campaign handle for report/investigation references without persistence

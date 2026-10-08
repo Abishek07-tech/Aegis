@@ -25,8 +25,9 @@
 | TASK 12 — Explainable Risk Engine | ✅ |
 | TASK 13 — Why Flagged / Why NOT Flagged | ✅ |
 | TASK 14 — Threat Correlation | ✅ |
+| TASK 15 — Campaign Detection | ✅ |
 
-Next: **TASK 15**
+Next: **TASK 16**
 
 Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
 
@@ -166,6 +167,7 @@ curl -X POST http://localhost:4000/api/candidates \
 | POST | `/api/candidates/:candidateId/analyze/risk` | Explainable risk score + reasons for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/explanation` | Why-flagged / why-NOT-flagged explanations for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/correlation` | Related candidates of the same brand + correlation cluster for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/campaign` | Impersonation campaign detection (type, confidence, indicators) for `SOCIAL`/`APP` candidates |
 
 **Name/handle analysis**
 
@@ -394,6 +396,42 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 - **`cluster`:** the transitive connected component containing the subject (subject first), so a domain-level peer of a related candidate is included even without a direct link
 - Other candidate types get **400** `CORRELATION_NOT_APPLICABLE`
 
+**Campaign detection**
+
+`SOCIAL` and `APP` candidates only. A deterministic interpretation of the correlation result: do the connected assets form **one coordinated impersonation campaign**? Built entirely on Task 14 (cluster + relationship links + Task 11 evidence) — no second detection engine, no risk-score reuse:
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "campaignDetected": true,
+    "campaign": {
+      "campaignId": "camp_130c65f8",
+      "campaignType": "CROSS_PLATFORM_IMPERSONATION",
+      "confidenceScore": 100,
+      "confidenceLevel": "VERY_HIGH",
+      "candidateIds": ["c123", "c456", "c789"],
+      "assetCount": 3, "platformCount": 2, "socialAssetCount": 2, "appAssetCount": 1,
+      "domainCount": 0, "websiteCount": 0, "relatedCandidateCount": 2,
+      "firstSeen": "2026-10-08T18:34:52.155Z", "lastSeen": "2026-10-08T18:34:52.171Z", "durationDays": 0,
+      "relationships": [ { "candidateId": "c456", "relationshipScore": 86, "relationshipLevel": "VERY_HIGH", "links": [ { "type": "SHARED_DOMAIN", "strength": "STRONG", "source": "TEXT", "explanation": "…" } ] } ],
+      "indicators": [ { "type": "SHARED_SUSPICIOUS_INFRASTRUCTURE", "strength": "STRONG", "explanation": "The candidates share the same external domain evil-pay.com …" } ]
+    },
+    "explanation": "3 candidate assets (2 social, 1 app) are linked by the same external domain evil-pay.com … The evidence is consistent with a coordinated impersonation campaign — campaign confidence 100/100 (VERY_HIGH)."
+  }
+}
+```
+
+- **Membership:** the Task 14 cluster re-BFS'd on relationships ≥ 45 — weak brand-lookalike links never pull a candidate (or a fan/look-alike account) into a campaign; official assets stay excluded
+- **Detected only with coordination evidence:** ≥2 members AND a shared suspicious domain/URL (official domains are filtered before correlation, so they can never qualify) or shared visual brand material — same brand, similar names, or high individual risk alone never form a campaign
+- **`confidenceScore`** (0–100, NOT the risk score): member scale + mean relationship strength + independent signal families (domain+URL count as one) + shared infrastructure + cross-platform presence + consistent brand-impersonation evidence; capped at 100 → `LOW` 0–24 / `MEDIUM` 25–49 / `HIGH` 50–74 / `VERY_HIGH` 75–100
+- **Types:** `CROSS_PLATFORM_IMPERSONATION` · `SOCIAL_IMPERSONATION` · `APP_IMPERSONATION` · `MULTI_ASSET_BRAND_IMPERSONATION` · `SHARED_INFRASTRUCTURE` (most specific supported type, derived only after detection)
+- **`campaignId`:** deterministic FNV-1a hash of the sorted member ids (`camp_…`) — same campaign from every member's view, no persistence
+- **Timeline:** real `createdAt` values only (`firstSeen`/`lastSeen`/`durationDays`; `null` when a timestamp is unavailable — never fabricated)
+- No campaign: `{ "campaignDetected": false, "campaign": null, "explanation": "No meaningful multi-asset correlation was found." }`
+- Other candidate types get **400** `CAMPAIGN_NOT_APPLICABLE`
+
 ### Response format
 
 - Success: `{ "success": true, "data": ... }` (list endpoints add `count`)
@@ -401,5 +439,5 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 
 ## Roadmap
 
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅.
-**Later:** campaign detection → AI Investigator.
+**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅ → campaign detection ✅.
+**Later:** AI Investigator.

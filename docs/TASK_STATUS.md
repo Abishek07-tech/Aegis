@@ -22,9 +22,10 @@
 - [✓] TASK 12 — Explainable Risk Engine
 - [✓] TASK 13 — Why Flagged / Why NOT Flagged
 - [✓] TASK 14 — Threat Correlation
+- [✓] TASK 15 — Campaign Detection
 
-**Current Task:** TASK 14
+**Current Task:** TASK 15
 
 **Status:** COMPLETED
 
-**Next Task:** TASK 15
+**Next Task:** TASK 16

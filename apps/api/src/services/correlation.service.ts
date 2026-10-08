@@ -110,8 +110,9 @@ const sortedIntersection = (
 ): string[] => [...left].filter((value) => right.has(value)).sort();
 
 // HIGH-severity non-protective signals in identity/content categories: both candidates
-// strongly resemble the same registered brand.
-const strongBrandSignals = (evidence: EvidenceItem[]): Set<string> => {
+// strongly resemble the same registered brand. Exported for Task 15 campaign indicators
+// (shared evidence inspection only — no correlation logic is re-implemented there).
+export const strongBrandSignals = (evidence: EvidenceItem[]): Set<string> => {
   const signals = new Set<string>();
   for (const item of evidence) {
     if (isProtectiveSignal(item.signal) || item.severity !== "HIGH") continue;

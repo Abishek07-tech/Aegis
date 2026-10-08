@@ -90,3 +90,34 @@ export const CORRELATION_THRESHOLDS = {
   // relationship levels: LOW 0–24, MEDIUM 25–49, HIGH 50–74, VERY_HIGH 75–100
   LEVEL: { MEDIUM: 25, HIGH: 50, VERY_HIGH: 75 },
 } as const;
+
+export const CAMPAIGN_THRESHOLDS = {
+  // membership: campaign members are reachable from the subject through correlation
+  // edges at least this strong — weak brand-lookalike links (e.g. shared branding
+  // alone at 30) can never pull a candidate into a campaign
+  MIN_RELATIONSHIP_SCORE: 45,
+  // campaign confidence = min(100, Σ components); a bounded deterministic formula
+  // that is deliberately NOT the Task 12 candidate risk score. Components:
+  //   SIZE      = SIZE_WEIGHT × min(1, (members − 1) / SIZE_DIVISOR)
+  //   EDGE      = EDGE_WEIGHT × mean(campaign edge scores) / 100
+  //   TYPE      = TYPE_WEIGHT × min(1, independent signal families / TYPE_DIVISOR)
+  //   INFRA     = INFRA_WEIGHT when any campaign edge shares a domain/URL
+  //   CROSS     = CROSS_WEIGHT when both social and app members are present
+  //   EVIDENCE  = EVIDENCE_WEIGHT × (members with HIGH impersonation evidence / eligible)
+  // Sum of maxima (115) intentionally exceeds 100 → hard cap at MAX_SCORE.
+  // Signal families dedupe SHARED_DOMAIN + SHARED_URL into one infrastructure
+  // family so the same underlying hosting never counts twice.
+  CONFIDENCE: {
+    SIZE_WEIGHT: 25,
+    SIZE_DIVISOR: 2,
+    EDGE_WEIGHT: 25,
+    TYPE_WEIGHT: 20,
+    TYPE_DIVISOR: 3,
+    INFRA_WEIGHT: 15,
+    CROSS_WEIGHT: 10,
+    EVIDENCE_WEIGHT: 20,
+  },
+  MAX_SCORE: 100,
+  // confidence levels reuse the correlation ladder: LOW 0–24, MEDIUM 25–49, HIGH 50–74, VERY_HIGH 75–100
+  LEVEL: CORRELATION_THRESHOLDS.LEVEL,
+} as const;
