@@ -4,6 +4,7 @@ import {
   analyzeCandidateEvidenceHandler,
   analyzeCandidateLogoHandler,
   analyzeCandidateNameHandler,
+  analyzeCandidateRiskHandler,
   analyzeCandidateSocialRiskHandler,
   analyzeCandidateTextHandler,
   createCandidateHandler,
@@ -30,6 +31,10 @@ candidateRouter.post(
 candidateRouter.post(
   "/:candidateId/analyze/evidence",
   analyzeCandidateEvidenceHandler,
+);
+candidateRouter.post(
+  "/:candidateId/analyze/risk",
+  analyzeCandidateRiskHandler,
 );
 candidateRouter.get("/", listCandidatesHandler);
 candidateRouter.get("/:id", getCandidateHandler);

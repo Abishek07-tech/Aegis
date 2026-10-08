@@ -6,7 +6,11 @@ import type { Brand, CandidateAsset, OfficialAsset } from "../generated/prisma/c
 import { listOfficialAssets } from "./asset.service";
 import { getBrandById } from "./brand.service";
 import { getCandidateById } from "./candidate.service";
-import { buildAppSignals } from "./app-risk.service";
+import {
+  buildAppSignals,
+  getOfficialAppValues,
+  isOfficialAppIdentity,
+} from "./app-risk.service";
 import {
   computeCandidateLogoAnalysis,
   type LogoAnalysisComputeCode,
@@ -15,7 +19,11 @@ import {
   computeNameAnalysis,
   type NameAnalysisComputeCode,
 } from "./name-analysis.service";
-import { buildSocialSignals } from "./social-risk.service";
+import {
+  buildSocialSignals,
+  getOfficialSocialValues,
+  isOfficialSocialIdentity,
+} from "./social-risk.service";
 import {
   computeTextAnalysis,
   type TextAnalysisComputeCode,
@@ -93,6 +101,9 @@ const APP_NOT_APPLICABLE_REASON =
 const SOCIAL_NOT_APPLICABLE_REASON =
   "Social risk analysis is only applicable to SOCIAL candidates — not evaluated for this APP candidate.";
 
+const OFFICIAL_ACCOUNT_MATCH_REASON =
+  "Candidate value exactly matches a registered official social identity — protective (benign) evidence.";
+
 export const dedupeEvidence = (items: EvidenceItem[]): EvidenceItem[] => {
   const seen = new Set<string>();
   const result: EvidenceItem[] = [];
@@ -148,9 +159,20 @@ export const collectEvidence = async (
   const items: EvidenceItem[] = [];
   const unavailable: UnavailableEvidence[] = [];
 
+  // Exact official identity (reuses Task 9/10 helpers): impersonation-style name/text
+  // evidence would say "the official asset resembles itself" — suppress it and record
+  // benign protective evidence instead (false-positive protection for Tasks 11/12).
+  const isExactOfficial =
+    type === "SOCIAL"
+      ? isOfficialSocialIdentity(candidate.value, getOfficialSocialValues(assets))
+      : isOfficialAppIdentity(candidate.value, getOfficialAppValues(assets));
+
   const nameOutcome = computeNameAnalysis(candidate.value, assets);
   if (nameOutcome.ok) {
-    if (nameOutcome.data.score >= SOCIAL_SIGNAL_THRESHOLDS.NAME_SIMILARITY_MIN) {
+    if (
+      !isExactOfficial &&
+      nameOutcome.data.score >= SOCIAL_SIGNAL_THRESHOLDS.NAME_SIMILARITY_MIN
+    ) {
       items.push({
         source: "NAME",
         signal: "NAME_SIMILARITY",
@@ -168,7 +190,7 @@ export const collectEvidence = async (
 
   const textOutcome = computeTextAnalysis(candidate, brand, assets);
   if (textOutcome.ok) {
-    if (textOutcome.data.level !== "LOW") {
+    if (!isExactOfficial && textOutcome.data.level !== "LOW") {
       items.push({
         source: "TEXT",
         signal: "TEXT_IDENTITY_MATCH",
@@ -205,6 +227,15 @@ export const collectEvidence = async (
   }
 
   if (type === "SOCIAL") {
+    if (isExactOfficial) {
+      items.push({
+        source: "SOCIAL",
+        signal: "OFFICIAL_ACCOUNT_MATCH",
+        severity: "LOW",
+        score: 1,
+        reason: OFFICIAL_ACCOUNT_MATCH_REASON,
+      });
+    }
     const socialSignals = buildSocialSignals({ candidate, brand, assets });
     for (const signal of socialSignals) {
       items.push({

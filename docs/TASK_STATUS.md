@@ -19,9 +19,10 @@
 - [✓] TASK 9 — Social Risk Signals
 - [✓] TASK 10 — App Risk Analysis
 - [✓] TASK 11 — Multimodal Evidence Engine
+- [✓] TASK 12 — Explainable Risk Engine
 
-**Current Task:** TASK 11
+**Current Task:** TASK 12
 
 **Status:** COMPLETED
 
-**Next Task:** TASK 12 — Explainable Risk Engine
+**Next Task:** TASK 13 — Why Flagged / Why NOT Flagged

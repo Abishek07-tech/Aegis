@@ -22,8 +22,9 @@
 | TASK 9 — Social Risk Signals | ✅ |
 | TASK 10 — App Risk Analysis | ✅ |
 | TASK 11 — Multimodal Evidence Engine | ✅ |
+| TASK 12 — Explainable Risk Engine | ✅ |
 
-Next: **TASK 12 — Explainable Risk Engine**
+Next: **TASK 13 — Why Flagged / Why NOT Flagged**
 
 Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
 
@@ -160,6 +161,7 @@ curl -X POST http://localhost:4000/api/candidates \
 | POST | `/api/candidates/:candidateId/analyze/social-risk` | Social risk signals for a `SOCIAL` candidate (evidence, not a verdict) |
 | POST | `/api/candidates/:candidateId/analyze/app-risk` | App risk signals for an `APP` candidate (evidence, not a verdict) |
 | POST | `/api/candidates/:candidateId/analyze/evidence` | Multimodal evidence aggregation for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/risk` | Explainable risk score + reasons for `SOCIAL`/`APP` candidates |
 
 **Name/handle analysis**
 
@@ -292,7 +294,38 @@ False-positive protections: the **exact official app identifier** (normalized ma
 }
 ```
 
-Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `SOCIAL`/`APP`); exact content duplicates (same signal, severity, score, reason) are deduplicated first-wins. Nothing is combined into a global score — aggregation and scoring belong to the later Risk Engine. Other candidate types get **400** `EVIDENCE_ANALYSIS_NOT_APPLICABLE`.
+Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `SOCIAL`/`APP`); exact content duplicates (same signal, severity, score, reason) are deduplicated first-wins. Nothing is combined into a global score — that is the Risk Engine's job below. Other candidate types get **400** `EVIDENCE_ANALYSIS_NOT_APPLICABLE`.
+
+**Risk analysis (explainable scoring)**
+
+`SOCIAL` and `APP` candidates only. Deterministic scoring over Task 11 evidence — no LLM, no persistence, and **no fake/scam/malicious verdict** (it scores evidence, it does not classify intent):
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "type": "SOCIAL",
+    "riskScore": 100,
+    "riskLevel": "CRITICAL",
+    "confidence": 0.95,
+    "evidenceCount": 7,
+    "independentSourceCount": 4,
+    "reasons": [
+      { "category": "CONTENT", "signal": "TEXT_IDENTITY_MATCH", "impact": 34, "reason": "Candidate text contains strong similarity to the official brand identity." },
+      { "category": "IDENTITY", "signal": "OFFICIAL_IDENTITY_CONFLICT", "impact": 30, "reason": "…" }
+    ],
+    "evidence": [ "… Task 11 evidence, unchanged …" ],
+    "unavailable": [ "… Task 11 unavailable, unchanged …" ]
+  }
+}
+```
+
+- **Score model:** `contribution = weight(severity) × clamp(score,0,1)` with LOW=10/MEDIUM=20/HIGH=35; overlapping signals in the same category (IDENTITY / CONTENT / VISUAL / SOCIAL / DOMAIN) are damped to 25% after the strongest one; protective official signals (`OFFICIAL_DOMAIN_MATCH`, `OFFICIAL_ACCOUNT_MATCH`, `OFFICIAL_APP_MATCH`) add no risk (official domain dampens the total ×0.75; exact official identity caps the score at 24); final score is bounded to 0–100
+- **Levels:** LOW 0–24, MEDIUM 25–49, HIGH 50–74, CRITICAL 75–100
+- **`confidence` ∈ [0,1]:** evidence breadth + independent-category count + mean signal strength (a coverage heuristic, not a probability)
+- **`reasons`:** one entry per scoring evidence item (protective signals excluded), impact scaled so reasons sum to ≈ `riskScore`, sorted by impact desc → signal asc → source order
+- Candidates that exactly match the official identity are protected: name/text self-similarity is suppressed and a benign official-match signal is emitted instead. Other candidate types get **400** `RISK_ANALYSIS_NOT_APPLICABLE`
 
 ### Response format
 
@@ -301,5 +334,5 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 
 ## Roadmap
 
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring.
+**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations.
 **Later:** threat graph → campaign detection → AI Investigator.

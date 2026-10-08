@@ -40,6 +40,10 @@ import {
   analyzeCandidateEvidence,
   type EvidenceFailureCode,
 } from "../services/evidence.service";
+import {
+  analyzeCandidateRisk,
+  type RiskFailureCode,
+} from "../services/risk-engine.service";
 
 const NAME_ANALYSIS_FAILURE_MESSAGES: Record<
   Exclude<NameAnalysisFailureCode, "CANDIDATE_NOT_FOUND">,
@@ -112,6 +116,16 @@ const EVIDENCE_FAILURE_MESSAGES: Record<
     "Evidence analysis is only applicable to SOCIAL and APP candidates.",
   NO_TARGET_BRAND:
     "Candidate has no target brand (brandId is missing) — cannot collect multimodal evidence against official assets.",
+};
+
+const RISK_FAILURE_MESSAGES: Record<
+  Exclude<RiskFailureCode, "CANDIDATE_NOT_FOUND" | "BRAND_NOT_FOUND">,
+  string
+> = {
+  RISK_ANALYSIS_NOT_APPLICABLE:
+    "Risk analysis is only applicable to SOCIAL and APP candidates.",
+  NO_TARGET_BRAND:
+    "Candidate has no target brand (brandId is missing) — cannot assess risk against official assets.",
 };
 
 const readOptionalString = (value: unknown, field: string): string | undefined => {
@@ -362,6 +376,25 @@ export const analyzeCandidateEvidenceHandler = asyncHandler(async (req, res) => 
       throw ApiError.notFound("Target brand referenced by the candidate does not exist.");
     }
     throw ApiError.badRequest(EVIDENCE_FAILURE_MESSAGES[outcome.code], {
+      code: outcome.code,
+    });
+  }
+
+  res.status(200).json({ success: true, data: outcome.data });
+});
+
+export const analyzeCandidateRiskHandler = asyncHandler(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const outcome = await analyzeCandidateRisk(candidateId);
+
+  if (!outcome.ok) {
+    if (outcome.code === "CANDIDATE_NOT_FOUND") {
+      throw ApiError.notFound(`Candidate not found: ${candidateId}`);
+    }
+    if (outcome.code === "BRAND_NOT_FOUND") {
+      throw ApiError.notFound("Target brand referenced by the candidate does not exist.");
+    }
+    throw ApiError.badRequest(RISK_FAILURE_MESSAGES[outcome.code], {
       code: outcome.code,
     });
   }

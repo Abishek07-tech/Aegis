@@ -50,3 +50,25 @@ export const APP_SIGNAL_THRESHOLDS = {
   // APP_BRAND_IMPERSONATION requires >= 2 strong indicators; fixed deterministic score
   IMPERSONATION_SCORE: 0.9,
 } as const;
+
+export const RISK_ENGINE_THRESHOLDS = {
+  // base weight applied to each risk-contributing evidence item: contribution = weight × evidence.score
+  SEVERITY_WEIGHT: { LOW: 10, MEDIUM: 20, HIGH: 35 },
+  // risk levels: LOW 0–24, MEDIUM 25–49, HIGH 50–74, CRITICAL 75–100
+  LEVEL: { MEDIUM: 25, HIGH: 50, CRITICAL: 75 },
+  // overlapping evidence inside one category keeps only this fraction of its contribution
+  OVERLAP_DAMPING: 0.25,
+  // protective official-domain evidence multiplies the total risk by this factor
+  PROTECTIVE_DOMAIN_FACTOR: 0.75,
+  // an exact official identity can never score above this value (LOW ceiling)
+  OFFICIAL_IDENTITY_CAP: 24,
+  MAX_SCORE: 100,
+  // confidence ∈ [0,1] = ITEM_W·min(1, evidence/ITEM_DIV) + GROUP_W·min(1, groups/GROUP_DIV) + STRENGTH_W·meanScore
+  CONFIDENCE: {
+    ITEM_WEIGHT: 0.4,
+    ITEM_DIVISOR: 4,
+    GROUP_WEIGHT: 0.4,
+    GROUP_DIVISOR: 3,
+    STRENGTH_WEIGHT: 0.2,
+  },
+} as const;

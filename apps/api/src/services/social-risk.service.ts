@@ -231,6 +231,12 @@ export const getSupportLanguageSeverity = (
   return "LOW";
 };
 
+export const getOfficialSocialValues = (assets: OfficialAsset[]): string[] =>
+  assets
+    .filter((asset) => asset.type === SOCIAL_ASSET_TYPE)
+    .map((asset) => asset.value)
+    .filter((value) => normalizeText(value) !== "");
+
 export const isOfficialSocialIdentity = (
   candidateValue: string,
   officialSocialValues: string[],
@@ -291,10 +297,7 @@ export const buildSocialSignals = (input: SocialSignalInput): SocialSignal[] => 
   const signals: SocialSignal[] = [];
   const candidateText = buildCandidateText(input.candidate);
 
-  const officialSocialValues = input.assets
-    .filter((asset) => asset.type === SOCIAL_ASSET_TYPE)
-    .map((asset) => asset.value)
-    .filter((value) => normalizeText(value) !== "");
+  const officialSocialValues = getOfficialSocialValues(input.assets);
 
   const isOfficialAccount = isOfficialSocialIdentity(
     input.candidate.value,

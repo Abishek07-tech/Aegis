@@ -1021,3 +1021,76 @@ CHANGED package.json, docs/*, README.md
 - Task 9/10 signals and Task 11 evidence are shaped to be consumed — combine them there, never inside Tasks 9–11
 - Reuse the outcome-union → controller-maps-HTTP pattern; failure-code → HTTP tables above are the template
 - E2E recipe: ephemeral cluster `pg_ctl … start -p 55432`, `DATABASE_URL=postgresql://aegis@127.0.0.1:55432/aegis?schema=public PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
+
+---
+
+## TASK 12 — EXPLAINABLE RISK ENGINE (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/risk` — deterministic, explainable risk scoring for `SOCIAL` and `APP` candidates. Consumes Task 11 evidence, produces `{riskScore, riskLevel, confidence, reasons, evidence, unavailable}`. **No LLM, no persistence (computed per call), no schema changes, and no fake/scam/malicious verdict** — Task 12 scores evidence, it does not classify intent.
+
+```
+NEW     src/services/risk-engine.service.ts     # buildRiskResult + classifyEvidence + getRiskLevel + analyzeCandidateRisk
+CHANGED src/config/constants.ts                 # + RISK_ENGINE_THRESHOLDS (severity weights, level thresholds, damping, cap, confidence)
+CHANGED src/services/social-risk.service.ts     # + getOfficialSocialValues (behavior-preserving extraction)
+CHANGED src/services/evidence.service.ts        # exact-official suppression (NAME/TEXT) + benign OFFICIAL_ACCOUNT_MATCH
+CHANGED src/controllers/candidate.controller.ts # + analyzeCandidateRiskHandler + RISK_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts          # + POST /:candidateId/analyze/risk
+NEW     tests/risk-engine.pure.cjs              # 75 pure assertions
+NEW     tests/risk-engine.e2e.cjs               # 59 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape
+```json
+{
+  "candidateId": "...", "type": "SOCIAL" | "APP",
+  "riskScore": 100, "riskLevel": "CRITICAL", "confidence": 0.95,
+  "evidenceCount": 7, "independentSourceCount": 4,
+  "reasons": [ { "category": "CONTENT", "signal": "TEXT_IDENTITY_MATCH", "impact": 34, "reason": "…" } ],
+  "evidence": [ … Task 11 items unchanged … ],
+  "unavailable": [ … Task 11 entries unchanged … ]
+}
+```
+
+### The model (all pure, deterministic, unit-tested)
+- **Weight per severity:** LOW=10, MEDIUM=20, HIGH=35; `contribution = weight × clamp(score, 0, 1)` (score floor at 0 → negative/absurd inputs can never yield negative risk)
+- **Category overlap damping 0.25:** within a category, the strongest item contributes fully, the rest contribute 25% each — two identical NAME_SIMILARITY signals score 35+9=44, not 70 (pure-tested: "does not unfairly inflate")
+- **Protective signals never add risk and never appear in `reasons`:** `OFFICIAL_DOMAIN_MATCH` (dampens total × 0.75), `OFFICIAL_ACCOUNT_MATCH`, `OFFICIAL_APP_MATCH`
+- **Official-identity cap:** if an exact official-identity signal is present, the total is capped at **24** (cannot exceed LOW) — a candidate that *is* the official entity can never be scored as an impersonation
+- **Bounded:** `riskScore = round(clamp(0, 100, total))`; levels LOW 0–24 / MEDIUM 25–49 / HIGH 50–74 / CRITICAL 75–100
+- **`reasons`:** every non-protective evidence item, category-mapped (IDENTITY/CONTENT/VISUAL/SOCIAL/DOMAIN, unknown signal → source-based fallback), impact = item contribution × domainFactor × scale where `scale = total/rawTotal` so **impacts sum to ≈ riskScore** (verified: 44→44, 49→49, 100→100); sorted impact desc → signal asc → source order asc (deterministic); reason text is the evidence's own reason (no generic prose)
+- **`confidence ∈ [0,1]` (round2):** `0.4×min(1, evidenceCount/4) + 0.4×min(1, independentSourceCount/3) + 0.2×meanScore` — evidence breadth + cross-category independence + mean signal strength; `independentSourceCount` = distinct categories across all evidence (protective included)
+- **FP protection enhancement to Task 11 `collectEvidence`:** when the candidate value is *exactly* the official identity (`isOfficialSocialIdentity`/`isOfficialAppIdentity`), NAME/TEXT similarity items are suppressed (an official account must not get a "name resembles the brand" hit against itself) and a benign LOW `OFFICIAL_ACCOUNT_MATCH` (score 1) is emitted for SOCIAL (APP already gets `OFFICIAL_APP_MATCH` from Task 10). Behavior-preserving for all existing fixtures — no prior test candidate was exact-official
+
+### API + failure mapping (same pattern as Tasks 6–11)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `RISK_ANALYSIS_NOT_APPLICABLE` | **400** | `Risk analysis is only applicable to SOCIAL and APP candidates.` + `details.code` (mapped from evidence's `EVIDENCE_ANALYSIS_NOT_APPLICABLE`) |
+| `NO_TARGET_BRAND` | **400** | `Candidate has no target brand …` + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | `Target brand referenced by the candidate does not exist.` |
+
+Type check before brand check; `analyzeCandidateRisk` delegates to `analyzeCandidateEvidence` (single DB pipeline, evidence computed once).
+
+### Test results (Task 12)
+- **Pure 75/75**: all 20 required scenarios — empty→0/LOW; one LOW→5/LOW; MEDIUM ladder 20/40/60; single HIGH→35/MEDIUM (documented: one signal alone caps at MEDIUM band); 4 independent HIGH→100/CRITICAL (2→70/HIGH); 5-category cap at 100; negative score→0; determinism; overlap damping 44 < naive 70; confidence rises with category groups (0.53→0.90); unavailable adds no risk; official cap→24/LOW; EXTERNAL_DOMAIN+identity→49 (35+14) + domain dampening 20→15; **fake PaySecure → 100/CRITICAL/conf 0.95/7 items/4 groups**; harmless→0/LOW; exact official social→≤24/LOW (benign OFFICIAL_ACCOUNT_MATCH present, no NAME/TEXT items) + official app→0/LOW; reasons⊆evidence (signal + text); sorted deterministically (equal-impact alphabetical tie-break); confidence ∈ [0,1]; no fake/scam/malicious keys; helper functions (`classifyEvidence`, `getRiskLevel` edge ladder, `isProtectiveSignal`)
+- **E2E 59/59**: fake social→100/CRITICAL, fake app→95/CRITICAL, harmless→0, official social→LOW ≤24, official app→0, WEBSITE→400 `RISK_ANALYSIS_NOT_APPLICABLE`, missing→404, orphan→400 `NO_TARGET_BRAND`, GET→404, exact top-level shape, confidence/score bounds, forbidden-keys regex, Task 11 evidence endpoint regression, deterministic repeat
+- `npm run typecheck` / `npm run build` → **pass**
+- Combined suites: **248 pure + 210 e2e = 458 assertions, all green** (`npm test` / `npm run test:e2e` now chain risk-engine)
+
+### Database testing (Task 12)
+- Same ephemeral PostgreSQL recipe (cluster `/tmp/opencode/pgdata`, port 55432, server port 4100, `DATABASE_URL=postgresql://aegis@127.0.0.1:55432/aegis?schema=public`); real `.env` untouched; cluster/server stopped after tests
+
+### Limitations (recorded honestly)
+- Scoring weights/thresholds are engineering-judgment constants, not calibrated against labeled data; re-tuning requires updating `RISK_ENGINE_THRESHOLDS` + the pinned pure assertions
+- Category damping is a flat 0.25 for all but the strongest item in a category (no pairwise similarity measurement between the duplicate signals themselves)
+- The official-identity cap (24) assumes exact official identity means the candidate *is* the official entity — a malicious clone that somehow reproduces the exact official handle/package id would be under-scored (accepted: platforms prevent handle collision)
+- Confidence is a coverage heuristic, not a calibrated probability
+- `reasons[].impact` is rounded per item, so impacts sum to riskScore ± 1 (e.g. scale rounding); pinned cases in tests sum exactly
+- Risk result is never persisted; there is no history, no campaign-level aggregation (future tasks)
+
+### Notes for Task 13 (Why Flagged / Why NOT Flagged)
+- Task 12 already returns raw `evidence` + `reasons` in the payload — Task 13 must build the *explanation layer* on top (human-readable "why flagged"/"why NOT flagged" narrative), never re-score
+- Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above
+- E2E recipe unchanged: ephemeral cluster `pg_ctl … start -p 55432`, `DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
