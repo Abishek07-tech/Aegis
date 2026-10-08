@@ -1361,3 +1361,113 @@ confidenceScore = min(100, round(
 - Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above; new codes get `details.code` + a message-map entry
 - E2E recipe unchanged: `pg_ctl … start -p 55432`, `setsid env DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
 - `deriveCampaignId` gives a stable campaign handle for report/investigation references without persistence
+
+## TASK 16 — AI INVESTIGATION (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/investigation` — analyst-facing investigation report. Consumes Tasks 11–15 structured results by re-invoking the SAME engine chain the other analyze endpoints use (`collectEvidence` → `buildEvidenceResult` → `buildRiskResult` → `buildExplanation` → `buildCorrelationResult` → `computeCampaignAnalysis`) — no detection logic re-run, no value recomputed or overridden, no persistence, no schema changes, no new dependency.
+
+```
+NEW     src/services/ai-investigator.service.ts # deterministicInvestigation + runInvestigation + provider + entry points
+CHANGED src/config/constants.ts                 # + INVESTIGATION_THRESHOLDS (CONFIDENCE weights / LEVEL / LIMITS / PROSE)
+CHANGED src/controllers/candidate.controller.ts  # + analyzeCandidateInvestigationHandler + INVESTIGATION_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts           # + POST /:candidateId/analyze/investigation
+CHANGED .env.example                             # + commented AEGIS_AI_API_KEY/BASE_URL/MODEL/TIMEOUT_MS docs (no secrets)
+NEW     tests/investigation.pure.cjs             # 150 pure assertions
+NEW     tests/investigation.e2e.cjs              # 72 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape
+```json
+{
+  "candidateId": "...",
+  "investigation": {
+    "threatIntent": "SUPPORT_SCAM_PATTERN",
+    "secondaryIntents": ["PHISHING_LURE", "BRAND_IMPERSONATION", "ACCOUNT_IMPERSONATION"],
+    "confidence": 95, "confidenceLevel": "HIGH",
+    "headline": "@PaySecure_Support: evidence is consistent with a coordinated cross platform impersonation campaign against PaySecure (4 assets, campaign confidence 100/100)",
+    "assessment": "SOCIAL candidate … The deterministic risk engine scores this candidate 100/100 CRITICAL (confidence 0.95) … Investigation confidence 95/100 (HIGH).",
+    "campaignAssessment": { "detected": true, "campaignType": "CROSS_PLATFORM_IMPERSONATION", "confidence": 100, "memberCount": 4, "explanation": "…Task 15 text verbatim…" },
+    "keyFindings": [ { "finding", "evidence", "importance" } ],
+    "strongestEvidence": [ { "signal", "source", "strength", "explanation" } ],
+    "attackPath": [ { "step", "evidence" } ],
+    "uncertainties": [ { "issue", "reason" } ],
+    "recommendedActions": [ { "priority", "action", "reason" } ],
+    "source": "DETERMINISTIC"
+  }
+}
+```
+
+### Investigation confidence (INVESTIGATION_THRESHOLDS.CONFIDENCE — deliberately distinct from all other scores)
+```
+confidence = min(100, round(
+    30 × min(1, evidenceItems / 4)
+  + 25 × min(1, independentSourceCount / 3)
+  + 20 × mean(evidence scores)
+  + 15 × campaignConfidence / 100        // 0 when no campaign
+  + 10 × min(1, relatedCandidates / 2)
+))
+```
+- Sum of maxima = 100. Levels: LOW 0–39 / MEDIUM 40–69 / HIGH 70–100 (`LEVEL: {MEDIUM:40, HIGH:70}`) — NOT the Task 12 risk score, NOT the Task 12 0..1 confidence, NOT the Task 15 campaign confidence. Always deterministic; the model never supplies it.
+- Hard caps (`LIMITS`): keyFindings 6, strongestEvidence 5, attackPath 6, uncertainties 6, actions 6, secondaryIntents 4, related-noted 3, reasons-noted 3. Prose bounds (`PROSE`): headline 400, assessment 2000, field 500.
+
+### Threat intent (first supported wins — `deriveThreatIntent`)
+| Priority | Intent | Gate |
+|---|---|---|
+| 1 | `CREDENTIAL_TARGETING` | never emitted (no Task 11 credential signal exists) |
+| 2 | `APP_IMPERSONATION` | type APP + app identity signals ≥MEDIUM (APP_NAME_SIMILARITY / PACKAGE_IDENTIFIER_SIMILARITY / APP_BRAND_IMPERSONATION / APP_DESCRIPTION_MATCH) |
+| 3 | `SUPPORT_SCAM_PATTERN` | SUPPORT_LANGUAGE ≥MEDIUM + EXTERNAL_DOMAIN present |
+| 4 | `PHISHING_LURE` | EXTERNAL_DOMAIN + identity resemblance HIGH (NAME_SIMILARITY / OFFICIAL_IDENTITY_CONFLICT / TEXT_IDENTITY_MATCH / LOGO_SIMILARITY) |
+| 5 | `BRAND_IMPERSONATION` | brand material ≥MEDIUM (TEXT_IDENTITY_MATCH / BRAND_TEXT_MATCH / LOGO_SIMILARITY) OR campaign type ∈ {CROSS_PLATFORM, SOCIAL, APP, MULTI_ASSET_BRAND}_IMPERSONATION |
+| 6 | `ACCOUNT_IMPERSONATION` | SOCIAL + NAME_SIMILARITY/OFFICIAL_IDENTITY_CONFLICT ≥MEDIUM + (support lure OR external domain) |
+| — | `UNKNOWN` | nothing above |
+
+`secondaryIntents` = remaining supported intents in priority order (cap 4). Pinned: c1 → SUPPORT_SCAM_PATTERN with `[PHISHING_LURE, BRAND_IMPERSONATION, ACCOUNT_IMPERSONATION]`; app1 → APP_IMPERSONATION with `[PHISHING_LURE, BRAND_IMPERSONATION]`.
+
+### Attack path (fixed `ATTACK_PATH_STEPS` vocabulary, order preserved)
+Steps: Impersonated brand identity → User-facing social account → User-facing application listing → Support-oriented lure → External domain reference → Coordinated campaign assets. Identity lead only when brand material or (HIGH identity + (support or domain)); campaign step only when detected; official candidates → `[]`; partial/empty output allowed. Every step's `evidence` is a real signal reason / Task 15 explanation.
+
+### Uncertainties (fixed emission order, cap 6 — names what evidence could NOT establish)
+Official asset protection present → Logo evidence unavailable → No shared infrastructure evidence → No correlated candidates → Campaign confidence below HIGH → Limited evidence coverage (≤2 items) → Insufficient candidate metadata → Investigation confidence is LOW.
+
+### Recommended actions (HIGH → MEDIUM → LOW, cap 6, every reason cites real data)
+HIGH: review shared infra (Task 15 indicator text) · verify app publisher · prioritize analyst · preserve screenshots. MEDIUM: review connected accounts · verify external infrastructure ownership · monitor related assets (only when correlated but no campaign). LOW: gather metadata (no name/description) · continue monitoring (always last). `FORBIDDEN_ACTION` regex bans ban/block/takedown/suspend/contact-platform/accuse — investigation recommends analysis, never enforcement.
+
+### AI provider (optional, zero new dependencies)
+- `AIProvider { name, complete(request): Promise<string|null> }`; `readAIProviderConfig(env)` reads `AEGIS_AI_API_KEY` (no key → null → deterministic, always), `AEGIS_AI_BASE_URL` (default `https://api.openai.com/v1`, trailing slashes stripped at request time), `AEGIS_AI_MODEL` (default `gpt-4o-mini`), `AEGIS_AI_TIMEOUT_MS` (default 8000, capped 60000).
+- `createOpenAICompatibleProvider(config, fetchImpl=fetch)`: POST `…/chat/completions`, `temperature: 0`, `response_format: json_object`, key ONLY in the Authorization header (never in body), AbortController timeout; non-2xx / network error / timeout / non-string content → null. No logging of config, prompts, or bodies.
+- `runInvestigation(input, provider?)`: `undefined` → resolve from env, `null` → forced deterministic. Provider throw → caught → fallback.
+
+### AI output validation (`parseAIProviderResponse` — model may ONLY supply narrative)
+Allowed keys: headline, assessment, threatIntent, secondaryIntents, keyFindings, uncertainties, recommendedActions, attackPath. Rejection (→ full deterministic fallback) on: invalid JSON / empty / non-object / unknown keys (incl. injected confidence, riskScore, riskLevel, campaignAssessment) / wrong types / over-cap lists / prose exceeding bounds / verdict language (`FORBIDDEN_PROSE` fake|scam|malicious|definitely|certainly) / invented domains (`domainTokens` over every prose field must ⊆ `buildAIValidationContext` allowlist built from candidate/brand/assets/evidence/reasons/correlation/campaign texts) / threatIntent outside supported∪UNKNOWN / attack step outside the deterministic path (order normalized to base) / official subject emitting any step. Any single violation rejects the WHOLE payload. Valid merge: `{...base, ...parsed, source: "AI"}` with keyFindings APPENDED after deterministic ones (deduped, capped) — narrative additions can never displace observed facts; confidence/campaignAssessment/strongestEvidence always stay deterministic.
+
+### API + failure mapping (same pattern as Tasks 6–15)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `INVESTIGATION_NOT_APPLICABLE` | **400** | investigation is only applicable to SOCIAL and APP candidates + `details.code` |
+| `NO_TARGET_BRAND` | **400** | Candidate has no target brand … + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | Target brand referenced by the candidate does not exist. |
+
+### Test results (Task 16)
+- **Pure 150/150**: key sets exact; threat intent + secondary intent pins (social/app/official); confidence pins 95/96/74/0/52 with ladder 0/39→LOW 40/69→MEDIUM 70/100→HIGH; headline/assessment trace risk + campaign + correlation + intent + confidence; campaignAssessment mirrors Task 15 byte-for-byte (incl. no-campaign exact text); attack paths pinned per candidate + canonical order + official/weak empty; uncertainties pinned (official-first protection, logo, infra, coverage, LOW conf); action priority order + real-domain citation + forbidden-action scan; no fake/scam/malicious/definitely/certainly in any prose; prose domain tokens ⊆ fixtures; no risk/confidence override keys; determinism (repeated + reversed-input byte-identical); threat-intent rule matrix incl. CREDENTIAL_TARGETING unreachable; AI path: config defaults/nulls, forced-null fallback, fallback-on-invalid (7 payload classes), fallback-on-throw, transport mocks (URL join incl. trailing slash, auth header, key-not-in-body, non-2xx, network error, bad payload, timeout via abort-listening fake fetch), override prevention (6 injected-field classes), accepted-merge (AI headline + PHISHING_LURE adopted, confidence/campaign/strongest untouched, model finding appended), official no-steps rejection, prompt hygiene (rules stated, allowed intents/steps present, no secrets)
+- **E2E 72/72**: exact key sets; source DETERMINISTIC without key; campaignAssessment == live campaign endpoint output; app intent APP_IMPERSONATION; no-campaign exact shape (detected false, type null, confidence null, UNKNOWN, no path, 0/LOW); official protection (empty path, protection uncertainty, all-LOW actions, bounded confidence); fan partial path; prose hygiene + fixture-domain scan + no enforcement actions; failure paths (404 missing + message, 400 INVESTIGATION_NOT_APPLICABLE, 400 NO_TARGET_BRAND, GET → 404); byte-identical repeat; **Task 6–15 endpoint regressions** all 200/400 as before
+- `npm run typecheck` / `npm run build` → **pass**
+- Combined suites: **579 pure + 457 e2e = 1036 assertions, all green** (`npm test` / `npm run test:e2e` now chain investigation)
+
+### Database testing (Task 16)
+- Same ephemeral PostgreSQL recipe (cluster `/tmp/opencode/pgdata`, port 55432, server port 4100 via `setsid`, PID file `/tmp/opencode/server.pid`); real `.env` untouched; server + cluster stopped after tests (verified no `dist/server.js` process remains)
+
+### Limitations (recorded honestly)
+- The AI path is exercised ONLY with mocked providers in tests — no live LLM call is ever made (no key exists in the environment; integration against a real provider is untested)
+- Deterministic fallback is the production default: without `AEGIS_AI_API_KEY` every response is `source: "DETERMINISTIC"` byte-identical across runs
+- Threat-intent rules are documented heuristics over Task 9–11 signals, not a trained classifier; CREDENTIAL_TARGETING is reserved until a credential-phishing signal exists
+- Investigation re-invokes the full engine chain per request (same cost profile as the other analyze endpoints) — no caching, no persistence, no report history
+- Attack path is a fixed 6-step vocabulary: novel attacker techniques outside the vocabulary cannot be expressed (by design — prevents hallucinated steps)
+
+### Notes for Task 17 (Adversary Playbook Prediction)
+- Investigation output (threatIntent, campaignAssessment, attackPath) is read-only structured intelligence — a playbook layer should consume it without re-deriving intent or risk
+- `ATTACK_PATH_STEPS` is the vocabulary boundary; a playbook/tactic mapping must cite existing investigation fields, not invent new evidence
+- Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above; new codes get `details.code` + a message-map entry
+- E2E recipe unchanged: `pg_ctl … start -p 55432`, `setsid env DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`

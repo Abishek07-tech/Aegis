@@ -121,3 +121,46 @@ export const CAMPAIGN_THRESHOLDS = {
   // confidence levels reuse the correlation ladder: LOW 0–24, MEDIUM 25–49, HIGH 50–74, VERY_HIGH 75–100
   LEVEL: CORRELATION_THRESHOLDS.LEVEL,
 } as const;
+
+export const INVESTIGATION_THRESHOLDS = {
+  // investigation confidence = min(100, Σ components); a bounded deterministic
+  // narrative-confidence field that is deliberately NOT the Task 12 risk score,
+  // NOT the Task 12 confidence (0..1) and NOT the Task 15 campaign confidence.
+  // The model (when configured) never supplies this number. Components:
+  //   EVIDENCE    = EVIDENCE_WEIGHT × min(1, evidenceItems / EVIDENCE_DIVISOR)
+  //   CATEGORY    = CATEGORY_WEIGHT × min(1, evidenceCategories / CATEGORY_DIVISOR)
+  //   STRENGTH    = STRENGTH_WEIGHT × mean(evidence scores)
+  //   CAMPAIGN    = CAMPAIGN_WEIGHT × campaignConfidence / 100   (0 when no campaign)
+  //   CORRELATION = CORRELATION_WEIGHT × min(1, relatedCandidates / CORRELATION_DIVISOR)
+  // Sum of maxima = 100 (already bounded).
+  CONFIDENCE: {
+    EVIDENCE_WEIGHT: 30,
+    EVIDENCE_DIVISOR: 4,
+    CATEGORY_WEIGHT: 25,
+    CATEGORY_DIVISOR: 3,
+    STRENGTH_WEIGHT: 20,
+    CAMPAIGN_WEIGHT: 15,
+    CORRELATION_WEIGHT: 10,
+    CORRELATION_DIVISOR: 2,
+  },
+  MAX_SCORE: 100,
+  // investigation confidence levels: LOW 0–39, MEDIUM 40–69, HIGH 70–100
+  LEVEL: { MEDIUM: 40, HIGH: 70 },
+  // hard caps so a single request can never emit unbounded narrative output
+  LIMITS: {
+    KEY_FINDINGS: 6,
+    STRONGEST_EVIDENCE: 5,
+    ATTACK_PATH: 6,
+    UNCERTAINTIES: 6,
+    RECOMMENDED_ACTIONS: 6,
+    SECONDARY_INTENTS: 4,
+    RELATED_CANDIDATES_NOTED: 3,
+    REASONS_NOTED: 3,
+  },
+  // length bounds enforced on every narrative field (deterministic and model-sourced)
+  PROSE: {
+    HEADLINE_MAX: 400,
+    ASSESSMENT_MAX: 2000,
+    FIELD_MAX: 500,
+  },
+} as const;

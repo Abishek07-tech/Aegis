@@ -26,8 +26,9 @@
 | TASK 13 — Why Flagged / Why NOT Flagged | ✅ |
 | TASK 14 — Threat Correlation | ✅ |
 | TASK 15 — Campaign Detection | ✅ |
+| TASK 16 — AI Investigation | ✅ |
 
-Next: **TASK 16**
+Next: **TASK 17**
 
 Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
 
@@ -168,6 +169,7 @@ curl -X POST http://localhost:4000/api/candidates \
 | POST | `/api/candidates/:candidateId/analyze/explanation` | Why-flagged / why-NOT-flagged explanations for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/correlation` | Related candidates of the same brand + correlation cluster for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/campaign` | Impersonation campaign detection (type, confidence, indicators) for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/investigation` | AI investigation report (threat intent, confidence, attack path, actions) for `SOCIAL`/`APP` candidates |
 
 **Name/handle analysis**
 
@@ -432,6 +434,41 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 - No campaign: `{ "campaignDetected": false, "campaign": null, "explanation": "No meaningful multi-asset correlation was found." }`
 - Other candidate types get **400** `CAMPAIGN_NOT_APPLICABLE`
 
+**AI investigation**
+
+`SOCIAL` and `APP` candidates only. The investigation layer consumes the Tasks 11–15 structured results (evidence → risk → explanation → correlation → campaign, invoked exactly as the other analyze endpoints do — nothing is recomputed) and produces an analyst-facing report. Deterministic by default; when `AEGIS_AI_API_KEY` is set, a minimal OpenAI-compatible provider may polish the narrative fields — validated field-by-field, with silent fallback to the deterministic path on any failure:
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "investigation": {
+      "threatIntent": "SUPPORT_SCAM_PATTERN",
+      "secondaryIntents": ["PHISHING_LURE", "BRAND_IMPERSONATION", "ACCOUNT_IMPERSONATION"],
+      "confidence": 95,
+      "confidenceLevel": "HIGH",
+      "headline": "@PaySecure_Support: evidence is consistent with a coordinated cross platform impersonation campaign against PaySecure (4 assets, campaign confidence 100/100)",
+      "assessment": "…The deterministic risk engine scores this candidate 100/100 CRITICAL (confidence 0.95)… Investigation confidence 95/100 (HIGH).",
+      "campaignAssessment": { "detected": true, "campaignType": "CROSS_PLATFORM_IMPERSONATION", "confidence": 100, "memberCount": 4, "explanation": "…" },
+      "keyFindings": [ { "finding": "…", "evidence": "…", "importance": "HIGH" } ],
+      "strongestEvidence": [ { "signal": "TEXT_IDENTITY_MATCH", "source": "TEXT", "strength": "HIGH", "explanation": "…" } ],
+      "attackPath": [ { "step": "Impersonated brand identity", "evidence": "…" } ],
+      "uncertainties": [ { "issue": "Logo evidence unavailable", "reason": "…" } ],
+      "recommendedActions": [ { "priority": "HIGH", "action": "…", "reason": "…" } ],
+      "source": "DETERMINISTIC"
+    }
+  }
+}
+```
+
+- **Threat intent** (priority, first supported wins): app identity → support-scam lure → phishing lure → brand impersonation → account impersonation → `UNKNOWN`; `CREDENTIAL_TARGETING` is never emitted (no credential evidence exists yet)
+- **`confidence`** (0–100, NOT the 0–1 risk confidence): evidence coverage + independent sources + mean evidence strength + campaign confidence + correlation; levels `LOW` 0–39 / `MEDIUM` 40–69 / `HIGH` 70–100 — always computed deterministically, never supplied by the model
+- **`campaignAssessment` / `strongestEvidence`** are pass-through mirrors of Tasks 15/11–12 output; `attackPath` only contains fixed-vocabulary steps backed by real evidence (official subjects → `[]`); `uncertainties` name what the evidence could NOT establish
+- **AI path (optional):** model output may only replace narrative fields (headline, assessment, findings, uncertainties, actions, supported intents/steps) — unknown keys, invented domains, verdict language, or out-of-set steps reject the whole payload and fall back; `source` records `"AI"` vs `"DETERMINISTIC"`
+- Evidence-based language only — generated prose never contains fake/scam/malicious/definitely/certainly, and recommended actions never propose enforcement (ban/block/takedown/suspend)
+- Failure mapping: missing → **404**, `WEBSITE`/`DOMAIN` → **400** `INVESTIGATION_NOT_APPLICABLE`, orphan → **400** `NO_TARGET_BRAND`
+
 ### Response format
 
 - Success: `{ "success": true, "data": ... }` (list endpoints add `count`)
@@ -439,5 +476,5 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 
 ## Roadmap
 
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅ → campaign detection ✅.
-**Later:** AI Investigator.
+**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅ → campaign detection ✅ → AI investigation ✅.
+**Later:** adversary playbook prediction → AI investigation report.

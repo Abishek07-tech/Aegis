@@ -5,6 +5,7 @@ import {
   analyzeCandidateCorrelationHandler,
   analyzeCandidateEvidenceHandler,
   analyzeCandidateExplanationHandler,
+  analyzeCandidateInvestigationHandler,
   analyzeCandidateLogoHandler,
   analyzeCandidateNameHandler,
   analyzeCandidateRiskHandler,
@@ -50,6 +51,10 @@ candidateRouter.post(
 candidateRouter.post(
   "/:candidateId/analyze/campaign",
   analyzeCandidateCampaignHandler,
+);
+candidateRouter.post(
+  "/:candidateId/analyze/investigation",
+  analyzeCandidateInvestigationHandler,
 );
 candidateRouter.get("/", listCandidatesHandler);
 candidateRouter.get("/:id", getCandidateHandler);

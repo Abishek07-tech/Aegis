@@ -23,9 +23,10 @@
 - [✓] TASK 13 — Why Flagged / Why NOT Flagged
 - [✓] TASK 14 — Threat Correlation
 - [✓] TASK 15 — Campaign Detection
+- [✓] TASK 16 — AI Investigation
 
-**Current Task:** TASK 15
+**Current Task:** TASK 16
 
 **Status:** COMPLETED
 
-**Next Task:** TASK 16
+**Next Task:** TASK 17
