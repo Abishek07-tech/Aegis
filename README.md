@@ -92,6 +92,17 @@ npm run dev                 # http://localhost:4000
 | `npm run db:generate` | Regenerate the Prisma client |
 | `npm run db:validate` | Validate `prisma/schema.prisma` |
 | `npm run db:migrate` | Create/apply migrations (dev) |
+| `npm run demo:seed` | Idempotent PaySecure demo-data seed (see `docs/DEMO_SETUP.md`) |
+| `npm run demo:reset` | Remove the PaySecure demo records, then reseed |
+
+### Demo data
+
+`npm run demo:seed` (from `apps/api`, with `DATABASE_URL` set) creates one
+fictional PaySecure brand, its official website/domain/social/app assets, and
+five fictional candidate records (look-alike account, fake support account,
+impersonating app, look-alike domain, and a legitimate careers account for
+false-positive protection). Safe to rerun; reset with `npm run demo:reset`.
+Full setup, verification, and reset commands: [`docs/DEMO_SETUP.md`](docs/DEMO_SETUP.md).
 
 > The Prisma client is generated into `src/generated/prisma/` (gitignored). Run `npm run db:generate` (or `npm run build`) after a fresh clone.
 

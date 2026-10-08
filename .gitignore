@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment secrets
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+apps/api/dist/
+coverage/
+
+# Local databases and temporary files
+*.sqlite
+*.sqlite3
+*.db
+.DS_Store
