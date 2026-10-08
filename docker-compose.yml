@@ -1,0 +1,141 @@
+services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    mem_limit: 768m
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    mem_limit: 256m
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    volumes: ["./searxng/settings.yml:/etc/searxng/settings.yml:ro,Z"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:8080/search?q=healthcheck&format=json' | grep -q 'results'"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 512m
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    environment:
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: "10m"
+    volumes:
+      - ollamadata:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    # Inference measured at 535-536 MB; 640 MB leaves 104 MB headroom
+    # without reserving more than the host's measured available memory can support.
+    mem_limit: 640m
+    cpus: 1.0
+
+  ollama-init:
+    image: docker.io/ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:?set OLLAMA_MODEL}
+    depends_on:
+      ollama: {condition: service_healthy}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama show \"$${OLLAMA_MODEL}\" >/dev/null 2>&1 || ollama pull \"$${OLLAMA_MODEL}\""]
+    restart: "no"
+
+  backend:
+    build: {context: ./backend, dockerfile: Dockerfile}
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      searxng: {condition: service_healthy}
+      ollama: {condition: service_healthy}
+      ollama-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+
+  worker:
+    build: {context: ./backend, dockerfile: Dockerfile}
+    env_file: [.env]
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=1"]
+    depends_on:
+      backend: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      searxng: {condition: service_healthy}
+      ollama: {condition: service_healthy}
+      ollama-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.0
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: "${VITE_API_URL:-/api}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+
+  nginx:
+    image: docker.io/library/nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes: ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,Z"]
+    depends_on:
+      frontend: {condition: service_healthy}
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+
+volumes:
+  pgdata:
+  redisdata:
+  ollamadata:

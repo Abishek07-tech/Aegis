@@ -1,443 +1,135 @@
-# Aegis
+# Digital Risk Protection Platform
 
-**AI-Powered Impersonation Campaign Investigator** — a Digital Risk Protection platform that detects fake/impersonating social accounts, suspicious mobile apps, look-alike assets, and coordinated impersonation campaigns.
+An evidence-first, self-hosted prototype for investigating a brand's public
+digital identity and potential impersonation risk.
 
-## Status
+## Current implementation
 
-**PHASE 1 — FOUNDATION: COMPLETED** · **PHASE 2 — AI DETECTION: in progress**
+Phase 1 provides:
 
-| Phase 1 — Foundation | |
-|---|---|
-| TASK 1 — Backend Project Setup | ✅ |
-| TASK 2 — Database Setup | ✅ |
-| TASK 3 — Brand Profile | ✅ |
-| TASK 4 — Official Asset Registry | ✅ |
-| TASK 5 — Candidate Asset System | ✅ |
+- FastAPI backend with Argon2id password hashing and JWT authentication
+- user-isolated investigation CRUD and background scan status
+- optional user-supplied official websites, email domains, social URLs, apps, logo assets, and identity context supplement automatic discovery
+- PostgreSQL-ready SQLAlchemy models and an Alembic migration baseline
+- React/Vite/TypeScript security-console shell
+- Docker Compose services for frontend, backend, worker, PostgreSQL, Redis,
+  SearXNG, and Nginx
+- explicit source states (`NOT_CONFIGURED`, `UNAVAILABLE`, `FAILED`) instead
+  of fabricated findings
+- verified SearXNG JSON discovery adapter with bounded results and persisted
+  provenance
 
-| Phase 2 — AI Detection | |
-|---|---|
-| TASK 6 — Name/Handle Similarity | ✅ |
-| TASK 7 — Text/Description Similarity | ✅ |
-| TASK 8 — Logo Similarity | ✅ |
-| TASK 9 — Social Risk Signals | ✅ |
-| TASK 10 — App Risk Analysis | ✅ |
-| TASK 11 — Multimodal Evidence Engine | ✅ |
-| TASK 12 — Explainable Risk Engine | ✅ |
-| TASK 13 — Why Flagged / Why NOT Flagged | ✅ |
-| TASK 14 — Threat Correlation | ✅ |
-| TASK 15 — Campaign Detection | ✅ |
+## Local services
 
-Next: **TASK 16**
+The Compose deployment publishes SearXNG on `http://localhost:8080` and
+enables its JSON search format through `searxng/settings.yml`. The backend
+uses `http://searxng:8080` when running inside Compose (from the root `.env`)
+and `http://localhost:8080` when running directly on the host (from
+`backend/.env`). The backend client calls `/search?q=<query>&format=json`.
 
-Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
+Live collectors are intentionally isolated behind adapters. No production
+finding is generated without collected evidence.
 
-## Tech Stack
+## Local AI
 
-- **Backend:** Node.js, TypeScript, Express 4
-- **Database:** PostgreSQL with Prisma ORM 7 (driver adapter: `@prisma/adapter-pg` + `pg`)
-- **Dev tooling:** `tsx` (watch mode), `tsc` (build), npm scripts
+The only active AI provider is the internal Ollama service using
+`LiquidAI/lfm2.5-350m`. Ollama is reachable only on the Compose network; it
+has no public port and requires no API key. The initialization service
+idempotently pulls the model if it is not already installed. AI interprets
+bounded evidence only; deterministic provenance, signals, findings, and
+numeric risk remain authoritative.
 
-## Repository Structure
+For low-memory VMs, Ollama is configured with one parallel request, one loaded
+model, and a 10-minute keep-alive so the five selected AI candidates are
+processed sequentially without repeated model loads. Each request is limited
+to eight ranked evidence items, 6,000 context characters, a 2,048-token
+context, and 256 output tokens. The Ollama container has a 640 MB limit:
+inference was measured at 535–536 MB before this headroom was added, while
+the complete stack remained below the host's measured available memory.
 
-```
-Aegis/
-├── apps/
-│   ├── api/                    # Backend (Express + Prisma)
-│   │   ├── prisma/schema.prisma + migrations/
-│   │   ├── src/
-│   │   │   ├── config/         # env + Prisma client + shared constants
-│   │   │   ├── controllers/    # request validation + responses
-│   │   │   ├── middleware/     # async wrapper + central error handling
-│   │   │   ├── routes/         # route definitions & mounting
-│   │   │   ├── services/       # business/data layer (incl. analysis services)
-│   │   │   ├── app.ts          # Express app factory
-│   │   │   └── server.ts       # entry point
-│   │   ├── tests/              # pure + end-to-end tests
-│   │   ├── package.json
-│   │   ├── tsconfig.json
-│   │   └── .env.example
-│   └── web/                    # Frontend (planned)
-├── data/                       # Scenario datasets (planned)
-├── services/                   # Detection / risk / correlation / AI (planned)
-└── docs/
-```
-
-Architecture flow: **route → controller → service → Prisma**
-
-## Getting Started
-
-Prerequisites: Node.js 20+, npm, PostgreSQL.
+## Local setup
 
 ```bash
-cd apps/api
-npm install
-cp .env.example .env        # then set DATABASE_URL
-npm run db:migrate          # apply the Prisma schema
-npm run dev                 # http://localhost:4000
+cp .env.example .env
+docker compose up -d --build
 ```
 
-### Scripts
+The production-shaped Compose stack publishes only Nginx. For rootless local
+Podman validation, the host mapping is `8080:80`, so the frontend is available
+at `http://localhost:8080` and the API is under `/api` (for example,
+`GET /api/health`). Nginx continues to listen on port 80 inside its
+container. PostgreSQL, Redis, SearXNG, the backend, and the worker
+remain on the internal Compose network.
 
-| Script | Purpose |
-|---|---|
-| `npm run dev` | Development server with hot reload |
-| `npm run build` | `prisma generate` + TypeScript build → `dist/` |
-| `npm start` | Run the built production server |
-| `npm run typecheck` | Type validation without emitting files |
-| `npm test` | Pure analysis tests, no DB (run `npm run build` first) |
-| `npm run test:e2e` | End-to-end API tests (needs running server + reachable `DATABASE_URL`, override base URL with `AEGIS_BASE_URL`) |
-| `npm run db:generate` | Regenerate the Prisma client |
-| `npm run db:validate` | Validate `prisma/schema.prisma` |
-| `npm run db:migrate` | Create/apply migrations (dev) |
+Before starting, replace every placeholder in `.env`, especially
+`POSTGRES_PASSWORD`, `JWT_SECRET`, and `CORS_ORIGINS`. No external AI API keys
+are required.
 
-> The Prisma client is generated into `src/generated/prisma/` (gitignored). Run `npm run db:generate` (or `npm run build`) after a fresh clone.
+For the local hackathon demo, `.env.example` enables an idempotent demo
+account bootstrap:
 
-## API
-
-Base URL: `http://localhost:4000`
-
-### Health
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/health` | Service health check |
-
-```json
-{ "success": true, "service": "Aegis API", "status": "running" }
+```text
+Email: demo@brand.local
+Password: BrandDemo@2026!
 ```
 
-### Brands
+These credentials are for local demonstration only and are not production-safe.
+Set `ENABLE_DEMO_ACCOUNT=false` for production. The backend creates this user
+only when enabled and absent, hashes the password with the existing Argon2id
+implementation, and never overwrites an existing account or password.
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/brands` | Create a brand (`name` required; `logoUrl`, `website` optional) |
-| GET | `/api/brands` | List all brands |
-| GET | `/api/brands/:id` | Get one brand (404 if missing) |
-| DELETE | `/api/brands/:id` | Delete brand (official assets cascade) |
+The `pgdata` and `redisdata` named volumes must not be removed during normal
+upgrades or restarts.
 
-### Official Assets
+For Podman, use the equivalent `podman-compose` commands. The same service
+hostnames are used: `postgres`, `redis`, and `searxng`.
 
-Official assets are the legitimate brand references (social handles, domains, apps) used later for impersonation comparison.
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/brands/:brandId/assets` | Create an official asset |
-| GET | `/api/brands/:brandId/assets` | List the brand's assets |
-| GET | `/api/brands/:brandId/assets/:assetId` | Get one asset (ownership enforced) |
-| DELETE | `/api/brands/:brandId/assets/:assetId` | Delete an asset (ownership enforced) |
-
-Supported asset types: `SOCIAL`, `WEBSITE`, `APP`, `DOMAIN`
+For a host-based backend:
 
 ```bash
-curl -X POST http://localhost:4000/api/brands/<brandId>/assets \
-  -H "Content-Type: application/json" \
-  -d '{"type":"SOCIAL","value":"@PaySecure"}'
+python -m venv .venv && . .venv/bin/activate
+pip install -r backend/requirements.txt
+uvicorn app.main:app --app-dir backend --reload
 ```
 
-### Candidates
+## Oracle Cloud deployment
 
-Suspicious assets queued for investigation. `status` always starts as `PENDING`.
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/candidates` | Create a candidate (`type` + `value` required; `name`, `description`, `brandId` optional) |
-| GET | `/api/candidates` | List candidates, optional filters: `?status=`, `?type=`, `?brandId=` |
-| GET | `/api/candidates/:id` | Get one candidate (404 if missing) |
-| PATCH | `/api/candidates/:id/status` | Update status (`PENDING` \| `REVIEWING` \| `CONFIRMED` \| `DISMISSED`) |
-| DELETE | `/api/candidates/:id` | Delete a candidate (404 if missing) |
-
-Candidate types: `SOCIAL`, `WEBSITE`, `APP`, `DOMAIN`
+Use an Oracle Cloud VM with a firewall/security list permitting only SSH and
+the intended HTTP/HTTPS ports. For Oracle production, map the host to Nginx's
+internal port 80 using host port 80 or 443 as appropriate, with TLS
+termination and certificate management configured explicitly. Keep ports
+5432, 6379, 8080, 8000, and 11434 closed to the public internet. The
+`8080:80` mapping in this repository is for rootless local Podman validation,
+not the public Oracle listener.
 
 ```bash
-curl -X POST http://localhost:4000/api/candidates \
-  -H "Content-Type: application/json" \
-  -d '{"type":"SOCIAL","value":"@PaySecureSupport","name":"PaySecure Support"}'
+cp .env.example .env
+# edit .env with production values and your public HTTPS origin
+podman-compose up -d --build
+podman-compose ps
+curl http://127.0.0.1:8080/api/health
 ```
 
-### Detection
+Backend startup runs `alembic upgrade head` before Uvicorn starts. This is
+safe for the existing migrations and ensures the persistent PostgreSQL volume
+is upgraded before the API becomes healthy.
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/candidates/:candidateId/analyze/name` | Name/handle similarity of a candidate vs its brand's official assets |
-| POST | `/api/candidates/:candidateId/analyze/text` | Text/description identity similarity vs the official brand identity |
-| POST | `/api/candidates/:candidateId/analyze/logo` | Logo/visual similarity of the candidate vs the brand's official logo |
-| POST | `/api/candidates/:candidateId/analyze/social-risk` | Social risk signals for a `SOCIAL` candidate (evidence, not a verdict) |
-| POST | `/api/candidates/:candidateId/analyze/app-risk` | App risk signals for an `APP` candidate (evidence, not a verdict) |
-| POST | `/api/candidates/:candidateId/analyze/evidence` | Multimodal evidence aggregation for `SOCIAL`/`APP` candidates |
-| POST | `/api/candidates/:candidateId/analyze/risk` | Explainable risk score + reasons for `SOCIAL`/`APP` candidates |
-| POST | `/api/candidates/:candidateId/analyze/explanation` | Why-flagged / why-NOT-flagged explanations for `SOCIAL`/`APP` candidates |
-| POST | `/api/candidates/:candidateId/analyze/correlation` | Related candidates of the same brand + correlation cluster for `SOCIAL`/`APP` candidates |
-| POST | `/api/candidates/:candidateId/analyze/campaign` | Impersonation campaign detection (type, confidence, indicators) for `SOCIAL`/`APP` candidates |
+## Verification
 
-**Name/handle analysis**
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "...",
-    "matchedAssetId": "...",
-    "score": 0.92,
-    "level": "HIGH",
-    "isLookalike": true,
-    "reason": "Candidate name is highly similar to an official brand asset."
-  }
-}
+```bash
+pytest -q
+python -m compileall backend/app
 ```
 
-**Text/description analysis**
+## Security notes
 
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "...",
-    "score": 0.91,
-    "level": "HIGH",
-    "isSuspiciousSimilarity": true,
-    "matchedTerms": ["paysecure", "support"],
-    "reason": "Candidate text contains strong similarity to the official brand identity."
-  }
-}
-```
+- Set a long random `JWT_SECRET` outside development.
+- Passwords are never stored in plaintext.
+- Every investigation query is scoped to the authenticated user.
+- The collector boundary must enforce DNS-aware SSRF protection, timeouts,
+  response limits, and redirect validation before fetching external URLs.
+- Search, social, app, and AI integrations must report unavailable states;
+  they must not turn collection failures into “no threats”.
 
-**Logo analysis**
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "...",
-    "score": 0.96,
-    "level": "HIGH",
-    "isSimilar": true,
-    "reason": "Candidate logo is highly similar to the official brand logo."
-  }
-}
-```
-
-Requires `brand.logoUrl` (official logo) and a candidate logo reference. When either side is missing, or the image cannot be fetched/decoded, the API returns a structured **400 "logo comparison unavailable"** message instead of a fabricated score. Note: the current schema has no candidate logo field, so comparison is unavailable until one is added. Metric: perceptual gradient-hash × pixel-similarity on decoded PNG/JPEG (offline-decodable, no CV frameworks).
-
-Score `0..1` (1 = identical after normalization). Levels: `>= 0.85` HIGH, `>= 0.65` MEDIUM, else LOW. Deterministic Levenshtein + token-overlap similarity — no LLM, results are not stored yet. `isLookalike` / `isSuspiciousSimilarity` mean similar, **not** confirmed malicious.
-
-**Social risk signals**
-
-SOCIAL candidates only. Returns **all meaningful signals** (never one combined threat score) so the later Risk Engine can weigh the evidence:
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c123",
-    "type": "SOCIAL",
-    "signals": [
-      { "signal": "NAME_SIMILARITY", "severity": "LOW", "score": 0.56, "reason": "Candidate handle shows some similarity to an official social identity." },
-      { "signal": "BRAND_TEXT_MATCH", "severity": "HIGH", "score": 1, "reason": "Candidate profile text strongly references the protected brand identity." },
-      { "signal": "SUPPORT_LANGUAGE", "severity": "MEDIUM", "score": 0.6, "reason": "Profile uses customer-support language commonly associated with impersonation accounts." },
-      { "signal": "EXTERNAL_DOMAIN", "severity": "MEDIUM", "score": 0.7, "reason": "Candidate profile references an external domain that is not registered as an official brand asset: paysecure-help.com." },
-      { "signal": "OFFICIAL_IDENTITY_CONFLICT", "severity": "HIGH", "score": 0.9, "reason": "Candidate closely resembles an official social identity but is not the registered official account." }
-    ],
-    "signalCount": 5,
-    "hasHighSeverity": true
-  }
-}
-```
-
-Signals: `NAME_SIMILARITY` (reuses Task 6), `BRAND_TEXT_MATCH` (reuses Task 7), `SUPPORT_LANGUAGE` (12 centralized keywords), `OFFICIAL_DOMAIN_MATCH` / `EXTERNAL_DOMAIN` (URL/domain extraction + official-domain normalization), `OFFICIAL_IDENTITY_CONFLICT` (official-account exclusion applied first).
-
-False-positive protections: the **exact official account** (normalized match) never gets impersonation/conflict signals, official domains are never flagged as external, ordinary brand/support words alone never produce a HIGH signal, and harmless unrelated accounts return `signals: []`. Non-social candidates get **400** `SOCIAL_ANALYSIS_NOT_APPLICABLE` (via `details.code`). Deterministic, explainable, no LLM — signals are evidence, never a "fake" verdict.
-
-**App risk signals**
-
-APP candidates only. Fixed signal order: `APP_NAME_SIMILARITY`, `APP_DESCRIPTION_MATCH`, `PACKAGE_IDENTIFIER_SIMILARITY`, `OFFICIAL_APP_MATCH`, `OFFICIAL_DOMAIN_MATCH`, `EXTERNAL_DOMAIN`, `APP_BRAND_IMPERSONATION`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c456",
-    "type": "APP",
-    "signals": [
-      { "signal": "APP_NAME_SIMILARITY", "severity": "HIGH", "score": 1, "reason": "Candidate app name is highly similar to the protected brand or an official app." },
-      { "signal": "APP_DESCRIPTION_MATCH", "severity": "HIGH", "score": 1, "reason": "Candidate app description strongly references the protected brand identity." },
-      { "signal": "PACKAGE_IDENTIFIER_SIMILARITY", "severity": "MEDIUM", "score": 0.82, "reason": "Candidate package identifier is moderately similar to an official app identifier." },
-      { "signal": "APP_BRAND_IMPERSONATION", "severity": "HIGH", "score": 0.9, "reason": "Multiple strong similarities (app name, description, and/or package identifier) indicate this app closely imitates the protected brand identity." }
-    ],
-    "signalCount": 4,
-    "hasHighSeverity": true,
-    "unavailableSignals": [
-      { "signal": "DIFFERENT_PUBLISHER", "reason": "Publisher/developer metadata is not present in the current data model — comparison unavailable (DIFFERENT_PUBLISHER)." }
-    ]
-  }
-}
-```
-
-False-positive protections: the **exact official app identifier** (normalized match) yields only a benign `OFFICIAL_APP_MATCH` (LOW) and suppresses impersonation signals; generic words (`wallet`, `banking`, `support`, `refund`) never produce a HIGH on their own; official domains in app metadata are never external. `DIFFERENT_PUBLISHER` is always listed under `unavailableSignals` — the schema has no publisher field and was not modified. Non-APP candidates get **400** `APP_ANALYSIS_NOT_APPLICABLE`.
-
-**Multimodal evidence aggregation**
-
-`SOCIAL` and `APP` candidates only. Merges every modality into one ordered evidence list — `NAME` (Task 6), `TEXT` (Task 7), `LOGO` (Task 8), `SOCIAL` (Task 9) or `APP` (Task 10) — plus an honest `unavailable` list for modalities that could not be evaluated:
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c123",
-    "type": "SOCIAL",
-    "evidence": [
-      { "source": "NAME", "signal": "NAME_SIMILARITY", "severity": "LOW", "score": 0.63, "reason": "Candidate name has low similarity to official brand assets." },
-      { "source": "TEXT", "signal": "TEXT_IDENTITY_MATCH", "severity": "HIGH", "score": 1, "reason": "Candidate text contains strong similarity to the official brand identity." },
-      { "source": "SOCIAL", "signal": "BRAND_TEXT_MATCH", "severity": "HIGH", "score": 1, "reason": "Candidate profile text strongly references the protected brand identity." }
-    ],
-    "evidenceCount": 3,
-    "highSeverityCount": 2,
-    "hasHighSeverity": true,
-    "unavailable": [
-      { "source": "LOGO", "reason": "Target brand has no official logo (brand.logoUrl) — logo comparison unavailable." },
-      { "source": "APP", "reason": "App risk analysis is only applicable to APP candidates — not evaluated for this SOCIAL candidate." }
-    ]
-  }
-}
-```
-
-Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `SOCIAL`/`APP`); exact content duplicates (same signal, severity, score, reason) are deduplicated first-wins. Nothing is combined into a global score — that is the Risk Engine's job below. Other candidate types get **400** `EVIDENCE_ANALYSIS_NOT_APPLICABLE`.
-
-**Risk analysis (explainable scoring)**
-
-`SOCIAL` and `APP` candidates only. Deterministic scoring over Task 11 evidence — no LLM, no persistence, and **no fake/scam/malicious verdict** (it scores evidence, it does not classify intent):
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c123",
-    "type": "SOCIAL",
-    "riskScore": 100,
-    "riskLevel": "CRITICAL",
-    "confidence": 0.95,
-    "evidenceCount": 7,
-    "independentSourceCount": 4,
-    "reasons": [
-      { "category": "CONTENT", "signal": "TEXT_IDENTITY_MATCH", "impact": 34, "reason": "Candidate text contains strong similarity to the official brand identity." },
-      { "category": "IDENTITY", "signal": "OFFICIAL_IDENTITY_CONFLICT", "impact": 30, "reason": "…" }
-    ],
-    "evidence": [ "… Task 11 evidence, unchanged …" ],
-    "unavailable": [ "… Task 11 unavailable, unchanged …" ]
-  }
-}
-```
-
-- **Score model:** `contribution = weight(severity) × clamp(score,0,1)` with LOW=10/MEDIUM=20/HIGH=35; overlapping signals in the same category (IDENTITY / CONTENT / VISUAL / SOCIAL / DOMAIN) are damped to 25% after the strongest one; protective official signals (`OFFICIAL_DOMAIN_MATCH`, `OFFICIAL_ACCOUNT_MATCH`, `OFFICIAL_APP_MATCH`) add no risk (official domain dampens the total ×0.75; exact official identity caps the score at 24); final score is bounded to 0–100
-- **Levels:** LOW 0–24, MEDIUM 25–49, HIGH 50–74, CRITICAL 75–100
-- **`confidence` ∈ [0,1]:** evidence breadth + independent-category count + mean signal strength (a coverage heuristic, not a probability)
-- **`reasons`:** one entry per scoring evidence item (protective signals excluded), impact scaled so reasons sum to ≈ `riskScore`, sorted by impact desc → signal asc → source order
-- Candidates that exactly match the official identity are protected: name/text self-similarity is suppressed and a benign official-match signal is emitted instead. Other candidate types get **400** `RISK_ANALYSIS_NOT_APPLICABLE`
-
-**Why flagged / why NOT flagged (explanations)**
-
-`SOCIAL` and `APP` candidates only. A deterministic explanation layer over the evidence + risk results — no LLM, no scoring, no new verdicts. `riskScore`/`riskLevel`/`confidence` are copied from the Risk Engine unchanged:
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c123",
-    "type": "SOCIAL",
-    "riskScore": 4,
-    "riskLevel": "LOW",
-    "confidence": 0.87,
-    "summary": "Official/protective evidence prevents inappropriate escalation: OFFICIAL_ACCOUNT_MATCH, OFFICIAL_DOMAIN_MATCH present — risk 4/100 LOW (confidence 0.87).",
-    "whyFlagged": [
-      { "category": "CONTENT", "signal": "TEXT_IDENTITY_MATCH", "source": "TEXT", "impact": 34, "explanation": "Text/brand identity similarity — TEXT evidence at HIGH strength contributed 34 points to the 100/100 CRITICAL risk. Evidence: …" }
-    ],
-    "whyNotFlagged": [
-      { "category": "IDENTITY", "signal": "OFFICIAL_ACCOUNT_MATCH", "source": "SOCIAL", "protection": "Exact official identity match", "explanation": "…Official identity evidence reduced the risk because the candidate matches a registered official asset — the score is bounded to at most 24/100 (LOW ceiling)." },
-      { "category": "ASSESSMENT", "signal": "INSUFFICIENT_EVIDENCE", "source": "NONE", "protection": "Weak or insufficient evidence", "explanation": "There is insufficient evidence to flag this candidate: …" }
-    ],
-    "protectiveSignals": ["OFFICIAL_ACCOUNT_MATCH", "OFFICIAL_DOMAIN_MATCH"],
-    "evidenceCount": 3,
-    "independentSourceCount": 3
-  }
-}
-```
-
-- **`whyFlagged`:** one entry per Risk Engine reason (strongest first), each backed by its real evidence item — signal label, source, impact, and the evidence's own reason text; nothing is invented, and no asset is called fake/scam/malicious
-- **`whyNotFlagged`:** protective evidence actually present (exact official identity/app match with the 24-point cap stated, official domain match with the ×0.75 reduction stated) plus assessment entries: `INSUFFICIENT_EVIDENCE` (no risk evidence at all), `CONFLICTING_EVIDENCE` (protective + risk evidence both present), `LIMITED_SUPPORT` (flagged but confidence < 0.5)
-- **`summary`:** one deterministic line from risk level + counts + protection — strong / moderate / weak evidence, insufficient evidence, or protective evidence preventing inappropriate escalation
-- Other candidate types get **400** `EXPLANATION_NOT_APPLICABLE`
-
-**Threat correlation**
-
-`SOCIAL` and `APP` candidates only. A deterministic correlation engine over other candidates of the **same target brand** — shared infrastructure (domain/URL), shared brand-identity/visual evidence, and shared strong signals. No LLM, no risk-score reuse:
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c123",
-    "cluster": { "candidateIds": ["c123", "c456"], "size": 2 },
-    "relatedCandidates": [
-      {
-        "candidateId": "c456",
-        "relationshipScore": 86,
-        "relationshipLevel": "VERY_HIGH",
-        "links": [
-          { "type": "SHARED_DOMAIN", "strength": "STRONG", "source": "TEXT", "explanation": "Both candidates reference the same external domain evil-pay.com …" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-- **Link types + weights:** `SHARED_DOMAIN` (45) · `SHARED_URL` (45, damped ×0.25 to 11 when the domain is already shared — same underlying infrastructure) · `SHARED_BRAND_IDENTITY` (30) · `SHARED_VISUAL_EVIDENCE` (25) · `SHARED_STRONG_SIGNALS` (20, only signals not covered by the other links — no double counting)
-- **Score** = min(100, Σ link weights) → `LOW` 0–24 / `MEDIUM` 25–49 / `HIGH` 50–74 / `VERY_HIGH` 75–100; ties broken by candidate ID for determinism
-- **False-positive protection:** official domains/URLs never become links, exact-official subjects/peers are excluded, and sharing only the brand registry (without strong evidence) creates no link
-- **`cluster`:** the transitive connected component containing the subject (subject first), so a domain-level peer of a related candidate is included even without a direct link
-- Other candidate types get **400** `CORRELATION_NOT_APPLICABLE`
-
-**Campaign detection**
-
-`SOCIAL` and `APP` candidates only. A deterministic interpretation of the correlation result: do the connected assets form **one coordinated impersonation campaign**? Built entirely on Task 14 (cluster + relationship links + Task 11 evidence) — no second detection engine, no risk-score reuse:
-
-```json
-{
-  "success": true,
-  "data": {
-    "candidateId": "c123",
-    "campaignDetected": true,
-    "campaign": {
-      "campaignId": "camp_130c65f8",
-      "campaignType": "CROSS_PLATFORM_IMPERSONATION",
-      "confidenceScore": 100,
-      "confidenceLevel": "VERY_HIGH",
-      "candidateIds": ["c123", "c456", "c789"],
-      "assetCount": 3, "platformCount": 2, "socialAssetCount": 2, "appAssetCount": 1,
-      "domainCount": 0, "websiteCount": 0, "relatedCandidateCount": 2,
-      "firstSeen": "2026-10-08T18:34:52.155Z", "lastSeen": "2026-10-08T18:34:52.171Z", "durationDays": 0,
-      "relationships": [ { "candidateId": "c456", "relationshipScore": 86, "relationshipLevel": "VERY_HIGH", "links": [ { "type": "SHARED_DOMAIN", "strength": "STRONG", "source": "TEXT", "explanation": "…" } ] } ],
-      "indicators": [ { "type": "SHARED_SUSPICIOUS_INFRASTRUCTURE", "strength": "STRONG", "explanation": "The candidates share the same external domain evil-pay.com …" } ]
-    },
-    "explanation": "3 candidate assets (2 social, 1 app) are linked by the same external domain evil-pay.com … The evidence is consistent with a coordinated impersonation campaign — campaign confidence 100/100 (VERY_HIGH)."
-  }
-}
-```
-
-- **Membership:** the Task 14 cluster re-BFS'd on relationships ≥ 45 — weak brand-lookalike links never pull a candidate (or a fan/look-alike account) into a campaign; official assets stay excluded
-- **Detected only with coordination evidence:** ≥2 members AND a shared suspicious domain/URL (official domains are filtered before correlation, so they can never qualify) or shared visual brand material — same brand, similar names, or high individual risk alone never form a campaign
-- **`confidenceScore`** (0–100, NOT the risk score): member scale + mean relationship strength + independent signal families (domain+URL count as one) + shared infrastructure + cross-platform presence + consistent brand-impersonation evidence; capped at 100 → `LOW` 0–24 / `MEDIUM` 25–49 / `HIGH` 50–74 / `VERY_HIGH` 75–100
-- **Types:** `CROSS_PLATFORM_IMPERSONATION` · `SOCIAL_IMPERSONATION` · `APP_IMPERSONATION` · `MULTI_ASSET_BRAND_IMPERSONATION` · `SHARED_INFRASTRUCTURE` (most specific supported type, derived only after detection)
-- **`campaignId`:** deterministic FNV-1a hash of the sorted member ids (`camp_…`) — same campaign from every member's view, no persistence
-- **Timeline:** real `createdAt` values only (`firstSeen`/`lastSeen`/`durationDays`; `null` when a timestamp is unavailable — never fabricated)
-- No campaign: `{ "campaignDetected": false, "campaign": null, "explanation": "No meaningful multi-asset correlation was found." }`
-- Other candidate types get **400** `CAMPAIGN_NOT_APPLICABLE`
-
-### Response format
-
-- Success: `{ "success": true, "data": ... }` (list endpoints add `count`)
-- Errors: `{ "success": false, "error": "...", "message": "..." }` with proper HTTP status (400 validation, 404 not found, 500 server)
-
-## Roadmap
-
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅ → threat correlation ✅ → campaign detection ✅.
-**Later:** AI Investigator.
+See `docs/architecture.md` and `docs/security.md` for the current design and
+known limitations.
