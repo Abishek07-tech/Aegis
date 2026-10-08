@@ -44,6 +44,10 @@ import {
   analyzeCandidateRisk,
   type RiskFailureCode,
 } from "../services/risk-engine.service";
+import {
+  analyzeCandidateExplanation,
+  type ExplanationFailureCode,
+} from "../services/explanation.service";
 
 const NAME_ANALYSIS_FAILURE_MESSAGES: Record<
   Exclude<NameAnalysisFailureCode, "CANDIDATE_NOT_FOUND">,
@@ -126,6 +130,16 @@ const RISK_FAILURE_MESSAGES: Record<
     "Risk analysis is only applicable to SOCIAL and APP candidates.",
   NO_TARGET_BRAND:
     "Candidate has no target brand (brandId is missing) — cannot assess risk against official assets.",
+};
+
+const EXPLANATION_FAILURE_MESSAGES: Record<
+  Exclude<ExplanationFailureCode, "CANDIDATE_NOT_FOUND" | "BRAND_NOT_FOUND">,
+  string
+> = {
+  EXPLANATION_NOT_APPLICABLE:
+    "Explanation analysis is only applicable to SOCIAL and APP candidates.",
+  NO_TARGET_BRAND:
+    "Candidate has no target brand (brandId is missing) — cannot explain risk against official assets.",
 };
 
 const readOptionalString = (value: unknown, field: string): string | undefined => {
@@ -401,3 +415,26 @@ export const analyzeCandidateRiskHandler = asyncHandler(async (req, res) => {
 
   res.status(200).json({ success: true, data: outcome.data });
 });
+
+export const analyzeCandidateExplanationHandler = asyncHandler(
+  async (req, res) => {
+    const candidateId = req.params.candidateId;
+    const outcome = await analyzeCandidateExplanation(candidateId);
+
+    if (!outcome.ok) {
+      if (outcome.code === "CANDIDATE_NOT_FOUND") {
+        throw ApiError.notFound(`Candidate not found: ${candidateId}`);
+      }
+      if (outcome.code === "BRAND_NOT_FOUND") {
+        throw ApiError.notFound(
+          "Target brand referenced by the candidate does not exist.",
+        );
+      }
+      throw ApiError.badRequest(EXPLANATION_FAILURE_MESSAGES[outcome.code], {
+        code: outcome.code,
+      });
+    }
+
+    res.status(200).json({ success: true, data: outcome.data });
+  },
+);

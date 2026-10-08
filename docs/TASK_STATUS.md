@@ -20,9 +20,10 @@
 - [✓] TASK 10 — App Risk Analysis
 - [✓] TASK 11 — Multimodal Evidence Engine
 - [✓] TASK 12 — Explainable Risk Engine
+- [✓] TASK 13 — Why Flagged / Why NOT Flagged
 
-**Current Task:** TASK 12
+**Current Task:** TASK 13
 
 **Status:** COMPLETED
 
-**Next Task:** TASK 13 — Why Flagged / Why NOT Flagged
+**Next Task:** TASK 14

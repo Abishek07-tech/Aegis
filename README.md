@@ -23,8 +23,9 @@
 | TASK 10 — App Risk Analysis | ✅ |
 | TASK 11 — Multimodal Evidence Engine | ✅ |
 | TASK 12 — Explainable Risk Engine | ✅ |
+| TASK 13 — Why Flagged / Why NOT Flagged | ✅ |
 
-Next: **TASK 13 — Why Flagged / Why NOT Flagged**
+Next: **TASK 14**
 
 Full tracking: [`docs/TASK_STATUS.md`](docs/TASK_STATUS.md) · Technical memory: [`docs/DEVELOPMENT_MEMORY.md`](docs/DEVELOPMENT_MEMORY.md)
 
@@ -162,6 +163,7 @@ curl -X POST http://localhost:4000/api/candidates \
 | POST | `/api/candidates/:candidateId/analyze/app-risk` | App risk signals for an `APP` candidate (evidence, not a verdict) |
 | POST | `/api/candidates/:candidateId/analyze/evidence` | Multimodal evidence aggregation for `SOCIAL`/`APP` candidates |
 | POST | `/api/candidates/:candidateId/analyze/risk` | Explainable risk score + reasons for `SOCIAL`/`APP` candidates |
+| POST | `/api/candidates/:candidateId/analyze/explanation` | Why-flagged / why-NOT-flagged explanations for `SOCIAL`/`APP` candidates |
 
 **Name/handle analysis**
 
@@ -327,6 +329,39 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 - **`reasons`:** one entry per scoring evidence item (protective signals excluded), impact scaled so reasons sum to ≈ `riskScore`, sorted by impact desc → signal asc → source order
 - Candidates that exactly match the official identity are protected: name/text self-similarity is suppressed and a benign official-match signal is emitted instead. Other candidate types get **400** `RISK_ANALYSIS_NOT_APPLICABLE`
 
+**Why flagged / why NOT flagged (explanations)**
+
+`SOCIAL` and `APP` candidates only. A deterministic explanation layer over the evidence + risk results — no LLM, no scoring, no new verdicts. `riskScore`/`riskLevel`/`confidence` are copied from the Risk Engine unchanged:
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidateId": "c123",
+    "type": "SOCIAL",
+    "riskScore": 4,
+    "riskLevel": "LOW",
+    "confidence": 0.87,
+    "summary": "Official/protective evidence prevents inappropriate escalation: OFFICIAL_ACCOUNT_MATCH, OFFICIAL_DOMAIN_MATCH present — risk 4/100 LOW (confidence 0.87).",
+    "whyFlagged": [
+      { "category": "CONTENT", "signal": "TEXT_IDENTITY_MATCH", "source": "TEXT", "impact": 34, "explanation": "Text/brand identity similarity — TEXT evidence at HIGH strength contributed 34 points to the 100/100 CRITICAL risk. Evidence: …" }
+    ],
+    "whyNotFlagged": [
+      { "category": "IDENTITY", "signal": "OFFICIAL_ACCOUNT_MATCH", "source": "SOCIAL", "protection": "Exact official identity match", "explanation": "…Official identity evidence reduced the risk because the candidate matches a registered official asset — the score is bounded to at most 24/100 (LOW ceiling)." },
+      { "category": "ASSESSMENT", "signal": "INSUFFICIENT_EVIDENCE", "source": "NONE", "protection": "Weak or insufficient evidence", "explanation": "There is insufficient evidence to flag this candidate: …" }
+    ],
+    "protectiveSignals": ["OFFICIAL_ACCOUNT_MATCH", "OFFICIAL_DOMAIN_MATCH"],
+    "evidenceCount": 3,
+    "independentSourceCount": 3
+  }
+}
+```
+
+- **`whyFlagged`:** one entry per Risk Engine reason (strongest first), each backed by its real evidence item — signal label, source, impact, and the evidence's own reason text; nothing is invented, and no asset is called fake/scam/malicious
+- **`whyNotFlagged`:** protective evidence actually present (exact official identity/app match with the 24-point cap stated, official domain match with the ×0.75 reduction stated) plus assessment entries: `INSUFFICIENT_EVIDENCE` (no risk evidence at all), `CONFLICTING_EVIDENCE` (protective + risk evidence both present), `LIMITED_SUPPORT` (flagged but confidence < 0.5)
+- **`summary`:** one deterministic line from risk level + counts + protection — strong / moderate / weak evidence, insufficient evidence, or protective evidence preventing inappropriate escalation
+- Other candidate types get **400** `EXPLANATION_NOT_APPLICABLE`
+
 ### Response format
 
 - Success: `{ "success": true, "data": ... }` (list endpoints add `count`)
@@ -334,5 +369,5 @@ Evidence items appear in fixed source order (`NAME` → `TEXT` → `LOGO` → `S
 
 ## Roadmap
 
-**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations.
+**Phase 2 — AI Detection:** name/handle similarity ✅ → text/description similarity ✅ → logo similarity ✅ → social risk signals ✅ → app risk analysis ✅ → evidence engine ✅ → explainable risk scoring ✅ → why-flagged / why-NOT-flagged explanations ✅.
 **Later:** threat graph → campaign detection → AI Investigator.

@@ -1094,3 +1094,73 @@ Type check before brand check; `analyzeCandidateRisk` delegates to `analyzeCandi
 - Task 12 already returns raw `evidence` + `reasons` in the payload — Task 13 must build the *explanation layer* on top (human-readable "why flagged"/"why NOT flagged" narrative), never re-score
 - Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above
 - E2E recipe unchanged: ephemeral cluster `pg_ctl … start -p 55432`, `DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
+
+---
+
+## TASK 13 — WHY FLAGGED / WHY NOT FLAGGED (COMPLETED)
+
+### What was built
+`POST /api/candidates/:candidateId/analyze/explanation` — a deterministic explanation layer over Tasks 11/12. Explains **why a candidate was flagged** (strongest risk signals in human-readable language) and **why it was not** (protective/benign evidence, weak evidence, conflicting evidence). No LLM, no API key, no scoring, no persistence, no schema changes, no fake/scam/malicious verdicts.
+
+```
+NEW     src/services/explanation.service.ts     # buildExplanation + buildWhyFlagged + buildWhyNotFlagged + buildSummary + analyzeCandidateExplanation
+CHANGED src/controllers/candidate.controller.ts # + analyzeCandidateExplanationHandler + EXPLANATION_FAILURE_MESSAGES
+CHANGED src/routes/candidate.routes.ts          # + POST /:candidateId/analyze/explanation
+NEW     tests/explanation.pure.cjs              # 51 pure assertions
+NEW     tests/explanation.e2e.cjs               # 71 end-to-end assertions
+CHANGED package.json, docs/*, README.md
+```
+
+### Result shape
+```json
+{
+  "candidateId": "...", "type": "SOCIAL" | "APP",
+  "riskScore": 4, "riskLevel": "LOW", "confidence": 0.87,   // copied from Task 12, never recomputed
+  "summary": "Official/protective evidence prevents inappropriate escalation: …",
+  "whyFlagged":     [ { "category", "signal", "source", "impact", "explanation" } ],
+  "whyNotFlagged":  [ { "category", "signal", "source", "protection", "explanation" } ],
+  "protectiveSignals": ["OFFICIAL_ACCOUNT_MATCH", "OFFICIAL_DOMAIN_MATCH"],
+  "evidenceCount": 3, "independentSourceCount": 3
+}
+```
+
+### Design decisions
+- **Zero new math:** `analyzeCandidateExplanation` → `analyzeCandidateRisk` → `analyzeCandidateEvidence` (single DB pipeline); `riskScore`/`riskLevel`/`confidence`/counts are copied from `RiskResult` verbatim — pure-tested for exact equality with Task 12 (no divergence)
+- **`whyFlagged`:** one entry per Task 12 risk reason (already sorted strongest-first, protective signals already excluded); each entry is backed by its actual evidence item matched on (signal, reason-text), first-in-source-order wins — a reason without backing evidence is **skipped, never invented**; explanation format: `<signal label> — <source> evidence at <severity> strength contributed <impact> points to the <score>/100 <level> risk. Evidence: <evidence reason>`; deterministic first-wins dedupe on the explanation string; human-readable `SIGNAL_LABELS` map (unknown future signals display as-is)
+- **`whyNotFlagged` entries:**
+  1. *Protective evidence present* (one per protective evidence item): `OFFICIAL_ACCOUNT_MATCH` → protection "Exact official identity match", `OFFICIAL_APP_MATCH` → "Exact official app match" (both state the official-asset reduction + the 24-point LOW ceiling from `RISK_ENGINE_THRESHOLDS.OFFICIAL_IDENTITY_CAP`), `OFFICIAL_DOMAIN_MATCH` → "Official domain match" (states the ×0.75 / −25% reduction when `riskScore > 0`, else "adds no risk"); explanations embed the evidence's own reason text
+  2. `INSUFFICIENT_EVIDENCE` (category `ASSESSMENT`, source `NONE`) — emitted only when there are zero risk reasons AND no protective evidence; cites real counts and the `unavailable` sources (e.g. "unavailable: LOGO, APP")
+  3. `CONFLICTING_EVIDENCE` (`ASSESSMENT`/`NONE`) — protective AND risk evidence both present; lists the protective signals and states their effects as *rule* statements (bounded at most 24, reduces total by 25%) — never claims a reduction that did not occur, and does not claim confidence was lowered (the Task 12 confidence formula does not penalize conflict)
+  4. `LIMITED_SUPPORT` (`ASSESSMENT`/`NONE`) — flagged but `confidence < 0.5` (explanation-layer constant `LOW_CONFIDENCE_THRESHOLD`, never applied to the score): cites confidence, evidence count, category count, and says the evidence is insufficient to support a stronger flag
+- **`summary` decision tree (deterministic, evidence-aware):** protective present && level LOW → "Official/protective evidence prevents inappropriate escalation: …"; else no risk reasons → "Insufficient evidence…" (0 items) or "Weak/limited evidence…" (items but nothing scored); else strength prefix (Strong ≥ HIGH / Moderate / Weak) + signal count + independence phrasing (`N independent evidence categories` vs `a single evidence category (limited source independence)`) + score/level/confidence/counts + protection note when applicable
+- **Honesty rules:** never uses "fake", "scam", "malicious" as a fact (pure + e2e regex-checked); never says "safe" as an absolute (official protection phrased as "reduced the risk because the candidate matches a registered official asset"); assessment entries use `category: "ASSESSMENT"` and `source: "NONE"` (they are not evidence items) — documented type union `EvidenceCategory | "ASSESSMENT"` / `EvidenceSource | "NONE"`
+- **Constants reused, not duplicated:** cap/domain-factor percentages derive from `RISK_ENGINE_THRESHOLDS` rather than literals
+
+### API + failure mapping (same pattern as Tasks 6–12)
+| Code | HTTP | Message / details |
+|---|---|---|
+| `CANDIDATE_NOT_FOUND` | **404** | `Candidate not found: <id>` |
+| `EXPLANATION_NOT_APPLICABLE` | **400** | `Explanation analysis is only applicable to SOCIAL and APP candidates.` + `details.code` (mapped from risk's `RISK_ANALYSIS_NOT_APPLICABLE`) |
+| `NO_TARGET_BRAND` | **400** | `Candidate has no target brand …` + `details.code` |
+| `BRAND_NOT_FOUND` | **404** | `Target brand referenced by the candidate does not exist.` |
+
+### Test results (Task 13)
+- **Pure 51/51**: high-risk fake social → 7 meaningful whyFlagged entries (score context, `Evidence:` embed, sorted, impacts sum to 100, summary "Strong evidence…"); harmless → whyFlagged empty + `INSUFFICIENT_EVIDENCE` with unavailable sources + exact summary; exact official identity → `OFFICIAL_ACCOUNT_MATCH` protective entry (cap wording) + protective summary + no NAME/TEXT self-similarity + `CONFLICTING_EVIDENCE`; official domain → ×0.75 reduction wording + DOMAIN category; official app → `OFFICIAL_APP_MATCH` exact wording + pinned summary; weak single-LOW evidence → `LIMITED_SUPPORT` with "insufficient to support a stronger flag" + "Weak evidence" summary + confidence cited; sorted strongest-first + equal-impact alphabetical tie-break; no duplicate explanations (within and across arrays); no fabricated evidence (every explanation backed by a real evidence item, assessments never emit `Evidence:`); no fake/scam/malicious text; deterministic (fresh recompute = byte-identical); zero divergence from Task 12 (score/level/confidence/counts + pinned `[100, "CRITICAL", 0.95]`); exact top-level key set
+- **E2E 71/71**: fake social 200 + shape + sorted + sum-100 + summary; **HTTP divergence check vs `/analyze/risk`** (score/level/confidence/counts identical); harmless → insufficient; official social → protective signals + cap + ×0.75 + conflicting; official app → protective + score 0; fake app → 95/CRITICAL strong; WEBSITE → 400 `EXPLANATION_NOT_APPLICABLE`; missing → 404; orphan → 400 `NO_TARGET_BRAND`; GET → 404; bounds on score/confidence; forbidden-words regex on summaries; no duplicate explanations; **Task 6–12 endpoint regressions** (name/text/logo/social-risk/app-risk/evidence/risk); deterministic repeat
+- `npm run typecheck` / `npm run build` → **pass**
+- Combined suites: **299 pure + 281 e2e = 580 assertions, all green** (`npm test` / `npm run test:e2e` now chain explanation)
+
+### Database testing (Task 13)
+- Same ephemeral PostgreSQL recipe (cluster `/tmp/opencode/pgdata`, port 55432, server port 4100, `DATABASE_URL=postgresql://aegis@127.0.0.1:55432/aegis?schema=public`); real `.env` untouched; cluster/server stopped after tests
+
+### Limitations (recorded honestly)
+- Explanations restate Task 12's *rule* statements (cap, domain factor) from constants; they never re-derive whether the rule was binding on this specific raw total (would require re-running the scoring math, deliberately avoided) — phrased as "bounded to at most…" unless `riskScore` equals the cap
+- `SIGNAL_LABELS` is a fixed vocabulary for today's signals; unknown future signals render as the raw signal name (safe fallback, slightly less human-readable)
+- `LOW_CONFIDENCE_THRESHOLD = 0.5` is an explanation-layer judgement, not calibrated
+- Assessment entries (`INSUFFICIENT_EVIDENCE`, `CONFLICTING_EVIDENCE`, `LIMITED_SUPPORT`) use synthetic `category`/`source` markers (`ASSESSMENT`/`NONE`) to keep the response shape uniform — consumers must not treat them as evidence items
+- Why-NOT-flagged covers protections Tasks 11/12 actually produce today; new protective signals added by future tasks must be registered in `PROTECTIVE_SIGNALS` (risk engine) first, then label/wording here
+
+### Notes for Task 14
+- Explanation is read-only over Tasks 11/12 — if Task 14 adds correlation/campaign signals, surface them through Task 11/12 data first, then explain; do not re-score here
+- Reuse the outcome-union → controller-maps-HTTP pattern and the failure-code table above
+- E2E recipe unchanged: ephemeral cluster `pg_ctl … start -p 55432`, `DATABASE_URL=… PORT=4100 node dist/server.js`, `AEGIS_BASE_URL=http://127.0.0.1:4100 npm run test:e2e`
