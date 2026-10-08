@@ -2,9 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 import { Bell, CalendarDays, ChevronDown, ChevronRight, Command, Menu, Search, X } from 'lucide-react'
 import BackendStatus from './BackendStatus.jsx'
 import Modal from '../ui/Modal.jsx'
+import { USE_MOCK_DATA } from '../../services/serviceFactory.js'
+
+export function initialNotifications(records){
+ if(USE_MOCK_DATA)return [{id:'n1',text:'3 critical threats detected',read:false},{id:'n2',text:'Fake account detected: @PaySecure_Support',read:false},{id:'n3',text:'Phishing domain detected',read:false},{id:'n4',text:'Fake application detected',read:true}]
+ const threats=records?.threats||[]
+ const pending=threats.filter(t=>String(t.status||'').toLowerCase()==='pending').length
+ return [
+  {id:'n-api-1',text:`${threats.length} candidate assets registered`,read:false},
+  {id:'n-api-2',text:`${pending} candidates awaiting review`,read:false},
+  {id:'n-api-3',text:`${(records?.campaigns||[]).length} correlated campaigns on record`,read:true}
+ ]
+}
 
 export default function Topbar({onMenu,overview,records,onSelectThreat,onNavigate,scanComplete}){
- const [query,setQuery]=useState(''),[searchOpen,setSearchOpen]=useState(false),[notifications,setNotifications]=useState(false),[items,setItems]=useState([{id:'n1',text:'3 critical threats detected',read:false},{id:'n2',text:'Fake account detected: @PaySecure_Support',read:false},{id:'n3',text:'Phishing domain detected',read:false},{id:'n4',text:'Fake application detected',read:true}])
+ const [query,setQuery]=useState(''),[searchOpen,setSearchOpen]=useState(false),[notifications,setNotifications]=useState(false),[items,setItems]=useState(()=>initialNotifications(records))
  useEffect(()=>{const key=e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();setSearchOpen(true)}if(e.key==='Escape'){setSearchOpen(false);setNotifications(false)}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)},[])
  useEffect(()=>{if(scanComplete)setItems(prev=>[{id:`scan-${Date.now()}`,text:`${scanComplete.demo?'Demo':'Authorized API'} scan complete: ${scanComplete.critical||0} critical threats detected`,read:false},{id:`scan-domain-${Date.now()}`,text:`${scanComplete.demo?'Simulated ':''}phishing domain detected`,read:false},{id:`scan-app-${Date.now()}`,text:`${scanComplete.demo?'Simulated ':''}fake application detected`,read:false},...prev])},[scanComplete])
  const found=useMemo(()=>{if(!query.trim()||!records)return[];const all=[...(records.threats||[]),...(records.accounts||[]),...(records.domains||[]),...(records.applications||[]),...(records.vulnerabilities||[]),...(records.campaigns||[])];return all.filter(x=>JSON.stringify(x).toLowerCase().includes(query.toLowerCase())).slice(0,8)},[query,records])

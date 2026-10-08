@@ -1,4 +1,4 @@
 import { aiMock } from '../data/mock/ai.js'
-import { USE_MOCK_DATA } from './serviceFactory.js'
-import { apiClient } from './apiClient.js'
-export const aiService={get:async(id)=>USE_MOCK_DATA?structuredClone(aiMock.find(item=>item.id===id)||aiMock):apiClient.get(`/api/ai-analysis/${encodeURIComponent(id)}`),list:async()=>USE_MOCK_DATA?structuredClone(aiMock):[await apiClient.get('/api/ai-analysis/THR-8821')]}
+import { getAegisAi } from './aegisAdapter.js'
+import { USE_MOCK_DATA, notAvailable } from './serviceFactory.js'
+export const aiService={get:async(id)=>USE_MOCK_DATA?structuredClone(aiMock.find(item=>item.id===id)||aiMock):notAvailable('AI analysis detail'),list:async()=>USE_MOCK_DATA?structuredClone(aiMock):getAegisAi()}

@@ -1,5 +1,5 @@
 export class ApiError extends Error {
-  constructor(message,{status=0,code='API_ERROR',cause}={}){super(message,{cause});this.name='ApiError';this.status=status;this.code=code}
+  constructor(message,{status=0,code='API_ERROR',cause,details}={}){super(message,{cause});this.name='ApiError';this.status=status;this.code=code;this.details=details}
 }
 
 let API_BASE_URL=import.meta.env.VITE_API_BASE_URL||''
@@ -12,7 +12,11 @@ export async function request(path,{method='GET',body,headers={},signal}={}){
   const abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true})
   try{
     const response=await fetch(`${API_BASE_URL}${path}`,{method,headers:{Accept:'application/json',...(body?{'Content-Type':'application/json'}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal})
-    if(!response.ok)throw new ApiError(`Request failed (${response.status})`,{status:response.status,code:'HTTP_ERROR'})
+    if(!response.ok){
+      const payload=await response.json().catch(()=>null)
+      const message=typeof payload?.message==='string'&&payload.message?`${payload.message} (HTTP ${response.status})`:`Request failed (${response.status})`
+      throw new ApiError(message,{status:response.status,code:'HTTP_ERROR',details:payload?.details})
+    }
     if(response.status===204)return null
     return await response.json()
   }catch(error){

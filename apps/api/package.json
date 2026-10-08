@@ -13,7 +13,9 @@
     "test:e2e": "node tests/social-risk.e2e.cjs && node tests/app-risk.e2e.cjs && node tests/evidence.e2e.cjs && node tests/risk-engine.e2e.cjs && node tests/explanation.e2e.cjs && node tests/correlation.e2e.cjs && node tests/campaign.e2e.cjs && node tests/investigation.e2e.cjs && node tests/playbook.e2e.cjs && node tests/report.e2e.cjs",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "demo:seed": "tsx src/scripts/seed-demo.ts",
+    "demo:reset": "tsx src/scripts/seed-demo.ts --reset"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
