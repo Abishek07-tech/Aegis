@@ -145,6 +145,52 @@ The POST returns `202` with a `data.id`. Poll the status endpoint until
 `sourceUrl`, `collectedAt`, and the target `brandId`; API-mode frontend pages
 load it from `/api/candidates` and display the source in its investigation drawer.
 
+### AI Analysis
+
+When `AEGIS_AI_API_KEY` is configured, the API integrates AI-powered threat analysis
+into the scan workflow. After collection discovers and persists new candidate assets,
+each candidate is analyzed automatically using an OpenAI-compatible chat-completions
+provider. The analysis produces:
+
+- **Threat intent classification** (brand impersonation, phishing lure, etc.)
+- **Risk score** (0–100) with confidence (0–1)
+- **Structured summary** with supporting evidence and uncertainties
+
+Results are persisted on the `CandidateAsset` record:
+
+| Field | Type | Description |
+|---|---|---|
+| `aiAnalysisStatus` | String | `PENDING`, `COMPLETED`, `FAILED`, or `UNAVAILABLE` |
+| `aiThreatIntent` | String? | AI-classified threat intent |
+| `aiRiskScore` | Int? | 0–100 risk score |
+| `aiConfidence` | Float? | 0–1 confidence |
+| `aiSummary` | String? | Narrative summary |
+| `aiAnalyzedAt` | DateTime? | When analysis completed |
+
+AI analysis can also be triggered on demand:
+
+```bash
+curl -X POST "$AEGIS_API_URL/api/candidates/<candidate-id>/analyze/ai"
+curl "$AEGIS_API_URL/api/candidates/<candidate-id>/ai-analysis"
+```
+
+The POST endpoint is rate-limited to 10 requests per minute per IP. When AI is not
+configured, the deterministic fallback investigator remains active and scans complete
+with `aiAnalysisStatus` set to `UNAVAILABLE`.
+
+**Provider configuration:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `AEGIS_AI_API_KEY` | (unset) | API key for the chat-completions provider |
+| `AEGIS_AI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
+| `AEGIS_AI_MODEL` | `gpt-4o-mini` | Model name |
+| `AEGIS_AI_TIMEOUT_MS` | `8000` | Request timeout (ms) |
+
+**Cost consideration:** each scan of N new candidates triggers N AI requests.
+Use a budget-conscious model and set appropriate timeouts. The provider abstraction
+supports any OpenAI-compatible endpoint (OpenAI, Azure OpenAI, local models).
+
 ## API
 
 Base URL: `http://localhost:4000`

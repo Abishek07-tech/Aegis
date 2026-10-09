@@ -13,12 +13,15 @@ import {
   analyzeCandidateRiskHandler,
   analyzeCandidateSocialRiskHandler,
   analyzeCandidateTextHandler,
+  analyzeCandidateAIHandler,
+  getCandidateAIAnalysisHandler,
   createCandidateHandler,
   deleteCandidateHandler,
   getCandidateHandler,
   listCandidatesHandler,
   updateCandidateStatusHandler,
 } from "../controllers/candidate.controller";
+import { aiAnalysisRateLimit } from "../middleware/rate-limit.middleware";
 
 export const candidateRouter = Router();
 
@@ -65,6 +68,15 @@ candidateRouter.post(
 candidateRouter.post(
   "/:candidateId/analyze/report",
   analyzeCandidateReportHandler,
+);
+candidateRouter.post(
+  "/:candidateId/analyze/ai",
+  aiAnalysisRateLimit,
+  analyzeCandidateAIHandler,
+);
+candidateRouter.get(
+  "/:candidateId/ai-analysis",
+  getCandidateAIAnalysisHandler,
 );
 candidateRouter.get("/", listCandidatesHandler);
 candidateRouter.get("/:id", getCandidateHandler);

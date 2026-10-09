@@ -49,11 +49,19 @@ model CandidateAsset {
   sourceUrl  String?
   collectedAt DateTime?
 
+  aiAnalysisStatus String   @default("PENDING")
+  aiThreatIntent   String?
+  aiRiskScore      Int?
+  aiConfidence     Float?
+  aiSummary        String?
+  aiAnalyzedAt     DateTime?
+
   brand Brand? @relation(fields: [brandId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([brandId])
   @@index([sourceUrl])
+  @@index([aiAnalysisStatus])
   @@unique([brandId, sourceUrl])
 }
 

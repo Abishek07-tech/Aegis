@@ -2,6 +2,7 @@ import { env } from "../config/env";
 import { prisma } from "../config/database";
 import { getBrandById } from "./brand.service";
 import { createCandidate } from "./candidate.service";
+import { runAIAnalysis } from "./ai-analysis.service";
 import dns from "node:dns/promises";
 import net from "node:net";
 
@@ -145,6 +146,7 @@ export const runCollection = async (jobId: string, brandId?: string): Promise<vo
     return;
   }
   let findings = 0; let errors = 0; let analyzed = 0;
+  const newCandidateIds: string[] = [];
   for (const brand of usable) {
     try {
       const results = await search(`"${brand.name}" impersonation`);
@@ -155,13 +157,14 @@ export const runCollection = async (jobId: string, brandId?: string): Promise<vo
         const exists = await prisma.candidateAsset.findFirst({ where: { brandId: brand.id, sourceUrl } });
         if (exists) continue;
         try {
-          await createCandidate({
+          const candidate = await createCandidate({
             type: "WEBSITE",
             value: sourceUrl,
             name: normalized.name,
             description: normalized.description,
             brandId: brand.id, sourceUrl, collectedAt: new Date(),
           });
+          newCandidateIds.push(candidate.id);
           findings++;
         } catch (error) {
           if (!(error instanceof Error && error.message.includes("Unique constraint"))) throw error;
@@ -172,4 +175,12 @@ export const runCollection = async (jobId: string, brandId?: string): Promise<vo
     await prisma.scanJob.update({ where: { id: jobId }, data: { progress: Math.round((analyzed / usable.length) * 100), assetsAnalyzed: analyzed, findings, errors } });
   }
   await prisma.scanJob.update({ where: { id: jobId }, data: { status: errors ? (analyzed ? "PARTIAL" : "FAILED") : "COMPLETED", completedAt: new Date(), progress: 100, assetsAnalyzed: analyzed, findings, errors, errorMessage: errors ? "One or more provider requests failed" : null } });
+
+  for (const candidateId of newCandidateIds) {
+    try {
+      await runAIAnalysis(candidateId);
+    } catch {
+      // AI analysis failure must not fail the scan; status is persisted as FAILED
+    }
+  }
 };

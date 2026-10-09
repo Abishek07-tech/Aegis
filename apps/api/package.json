@@ -9,7 +9,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/social-risk.pure.cjs && node tests/app-risk.pure.cjs && node tests/evidence.pure.cjs && node tests/risk-engine.pure.cjs && node tests/explanation.pure.cjs && node tests/correlation.pure.cjs && node tests/campaign.pure.cjs && node tests/investigation.pure.cjs && node tests/playbook.pure.cjs && node tests/report.pure.cjs && node tests/collection.pure.cjs",
+    "test": "node tests/social-risk.pure.cjs && node tests/app-risk.pure.cjs && node tests/evidence.pure.cjs && node tests/risk-engine.pure.cjs && node tests/explanation.pure.cjs && node tests/correlation.pure.cjs && node tests/campaign.pure.cjs && node tests/investigation.pure.cjs && node tests/playbook.pure.cjs && node tests/report.pure.cjs && node tests/collection.pure.cjs && node tests/ai-analysis.pure.cjs",
     "test:e2e": "node tests/social-risk.e2e.cjs && node tests/app-risk.e2e.cjs && node tests/evidence.e2e.cjs && node tests/risk-engine.e2e.cjs && node tests/explanation.e2e.cjs && node tests/correlation.e2e.cjs && node tests/campaign.e2e.cjs && node tests/investigation.e2e.cjs && node tests/playbook.e2e.cjs && node tests/report.e2e.cjs",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
