@@ -8,7 +8,7 @@ export const createApp = (): Express => {
   const app: Express = express();
 
   app.use(cors({ origin: env.CORS_ORIGIN }));
-  app.use(express.json());
+  app.use(express.json({ limit: "256kb" }));
   app.use(express.urlencoded({ extended: true }));
 
   app.use(router);

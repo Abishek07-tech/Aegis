@@ -1,4 +1,5 @@
 export const ASSET_TYPES = ["SOCIAL", "WEBSITE", "APP", "DOMAIN"] as const;
+export const COLLECTION_STATUSES = ["RUNNING", "COMPLETED", "PARTIAL", "FAILED", "UNAVAILABLE"] as const;
 
 export type AssetType = (typeof ASSET_TYPES)[number];
 

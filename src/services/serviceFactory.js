@@ -1,5 +1,6 @@
 import { ApiError } from './apiClient.js'
-export const USE_MOCK_DATA=import.meta.env.VITE_USE_MOCK_DATA!=='false'
+// Live API mode is the safe default. Demo data is opt-in for local evaluation.
+export const USE_MOCK_DATA=import.meta.env.VITE_USE_MOCK_DATA==='true'
 export const notAvailable=message=>Promise.reject(new ApiError(`Not available in API mode: ${message}`,{code:'NOT_AVAILABLE'}))
 export function createService({endpoint,mock,collection=false,api}){
   const real=method=>api?.[method]??(()=>notAvailable(`${method} ${endpoint}`))

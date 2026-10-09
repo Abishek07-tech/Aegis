@@ -41,6 +41,8 @@ export default function ThreatDrawer({ record, onClose, onResolve, onCampaign, o
   return <Drawer open={Boolean(record)} title={title} onClose={onClose}>{record && <>
     <div className="drawer-threat-head"><div><small>{record.id || 'DEMO RECORD'} · {record.type || record.classification || 'Finding'}</small><h3>{record.name || record.username || record.domain || record.finding || record.label}</h3></div><b className={`drawer-risk ${riskClass}`}>{riskValue}<small>/ 100</small></b></div>
     <div className="drawer-meta"><span>Classification<b>{record.type || record.classification || record.category || record.label || 'Brand Impersonation'}</b></span><span>Status<b>{record.status || 'Investigating'}</b></span><span>{projection.label}<b>{projection.value}</b></span></div>
+    {record.sourceUrl&&<p className="authorized-hint">Source URL: <a href={record.sourceUrl} target="_blank" rel="noreferrer">{record.sourceUrl}</a></p>}
+    {(record.collectedAt||record.createdAt)&&<p className="authorized-hint">Collected: {new Date(record.collectedAt||record.createdAt).toLocaleString()}</p>}
     <div className="drawer-tabs">{tabs.map(t => <button key={t} onClick={() => setTab(t)} className={tab === t ? 'active' : ''}>{t}</button>)}</div>
     {body}
     <div className="drawer-actions">

@@ -30,12 +30,14 @@ const shortTime = value => {
 
 const candidateToThreat = c => ({
   id: c.id,
-  severity: statusLabel(c.status),
+  severity: null,
   name: c.name || c.value,
   classification: c.description || `${c.type} candidate asset`,
   type: c.type,
   platform: c.type,
   asset: c.value,
+  sourceUrl: /^https?:\/\//i.test(c.value) ? c.value : null,
+  collectedAt: c.collectedAt || null,
   status: statusLabel(c.status),
   time: shortTime(c.createdAt),
   group: c.type,
@@ -54,7 +56,7 @@ const candidateToAccount = c => ({
   similarity: null,
   confidence: null,
   risk: null,
-  severity: statusLabel(c.status),
+  severity: null,
   status: statusLabel(c.status),
   domain: null,
   createdAt: c.createdAt,
@@ -157,6 +159,19 @@ async function fetchWorkspace() {
   const officialAssets = assetPayloads.flatMap(unwrap)
   const threats = candidates.map(candidateToThreat).sort(byCreatedAtDesc)
   const byType = type => candidates.filter(c => c.type === type)
+  const brand = brands[0]
+  const graphNodes = brand ? [
+    { id: `brand-${brand.id}`, label: brand.name, type: 'Brand', x: 12, y: 50, detail: 'Registered monitored brand' },
+    ...candidates.slice(0, 30).map((candidate, index) => ({
+      id: candidate.id,
+      label: candidate.name || candidate.value,
+      type: candidate.type === 'SOCIAL' ? 'Account' : candidate.type === 'APP' ? 'Application' : candidate.type === 'DOMAIN' ? 'Domain' : 'Website',
+      x: 30 + (index % 4) * 20,
+      y: 20 + Math.floor(index / 4) * 20,
+      detail: `${candidate.type} candidate · ${statusLabel(candidate.status)}`
+    }))
+  ] : []
+  const graphEdges = graphNodes.slice(1).map(node => [`brand-${brand.id}`, node.id])
   return {
     brands,
     candidates,
@@ -167,7 +182,11 @@ async function fetchWorkspace() {
     domains: candidates.filter(c => c.type === 'WEBSITE' || c.type === 'DOMAIN').map(candidateToDomain),
     vulnerabilities: [],
     campaigns: [],
-    evidence: { nodes: [], edges: [] },
+    evidence: {
+      nodes: graphNodes,
+      edges: graphEdges,
+      note: 'Registered candidates and their relationships to the monitored brand. Supporting evidence is generated on demand from each candidate drawer.'
+    },
     ai: [],
     dashboard: buildDashboard({ brands, candidates, officialAssets, loadedAt: new Date() })
   }

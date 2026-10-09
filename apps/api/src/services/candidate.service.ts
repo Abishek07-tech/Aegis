@@ -8,6 +8,8 @@ export interface CreateCandidateInput {
   name?: string;
   description?: string;
   brandId?: string;
+  sourceUrl?: string;
+  collectedAt?: Date;
 }
 
 export interface CandidateFilters {
@@ -26,6 +28,8 @@ export const createCandidate = (
       name: input.name,
       description: input.description,
       brandId: input.brandId,
+      sourceUrl: input.sourceUrl,
+      collectedAt: input.collectedAt,
       status: "PENDING",
     },
   });

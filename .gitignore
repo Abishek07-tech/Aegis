@@ -5,6 +5,8 @@ node_modules/
 # Environment secrets
 .env
 .env.*
+!.env.example
+!apps/api/.env.example
 
 # Logs
 *.log

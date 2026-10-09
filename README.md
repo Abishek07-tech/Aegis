@@ -92,6 +92,7 @@ npm run dev                 # http://localhost:4000
 | `npm run db:generate` | Regenerate the Prisma client |
 | `npm run db:validate` | Validate `prisma/schema.prisma` |
 | `npm run db:migrate` | Create/apply migrations (dev) |
+| `npm run db:migrate:deploy` | Apply checked-in migrations in production |
 | `npm run demo:seed` | Idempotent PaySecure demo-data seed (see `docs/DEMO_SETUP.md`) |
 | `npm run demo:reset` | Remove the PaySecure demo records, then reseed |
 
@@ -105,6 +106,44 @@ false-positive protection). Safe to rerun; reset with `npm run demo:reset`.
 Full setup, verification, and reset commands: [`docs/DEMO_SETUP.md`](docs/DEMO_SETUP.md).
 
 > The Prisma client is generated into `src/generated/prisma/` (gitignored). Run `npm run db:generate` (or `npm run build`) after a fresh clone.
+
+### Deployment
+
+**Vercel (frontend):** set the project root to the repository root, use `npm run build`
+as the build command, `dist` as the output directory, and set `VITE_API_BASE_URL` to
+the deployed Render API origin (for example, `https://api.example.com`). Set
+`VITE_USE_MOCK_DATA=false`; do not put backend credentials in any `VITE_` variable.
+
+**Render (API):** set the root directory to `apps/api`, use `npm ci && npm run build`
+as the build command, `npm run db:migrate:deploy && npm start` as the start command,
+and provide `DATABASE_URL`, `PORT`, `NODE_ENV=production`, and `CORS_ORIGIN` (the
+exact Vercel origin). The service listens on Render's `PORT`. `AEGIS_AI_API_KEY`,
+`AEGIS_AI_BASE_URL`, `AEGIS_AI_MODEL`, and `AEGIS_AI_TIMEOUT_MS` are optional; without
+an AI key the deterministic investigator remains active. `/health` reports only
+non-secret configuration status.
+
+Collection uses an optional, operator-controlled SearXNG-compatible JSON endpoint.
+Set `AEGIS_SEARCH_URL` to the complete authorized instance `/search` URL. Scans are
+persisted as `ScanJob` records and create deduplicated `CandidateAsset` records with
+source URLs and collection timestamps. Missing configuration reports `UNAVAILABLE`;
+provider errors report `PARTIAL` or `FAILED`, and an empty provider response remains
+a completed scan with zero findings rather than a safety verdict.
+
+Scan lifecycle:
+
+```bash
+curl -X POST "$AEGIS_API_URL/api/scans" \
+  -H 'Content-Type: application/json' \
+  -d '{"scope":"authorized-inventory","brandId":"<brand-id>"}'
+
+curl "$AEGIS_API_URL/api/scans/<scan-id>"
+curl "$AEGIS_API_URL/api/candidates?brandId=<brand-id>"
+```
+
+The POST returns `202` with a `data.id`. Poll the status endpoint until
+`COMPLETED`, `PARTIAL`, `FAILED`, or `UNAVAILABLE`. A persisted finding has a
+`sourceUrl`, `collectedAt`, and the target `brandId`; API-mode frontend pages
+load it from `/api/candidates` and display the source in its investigation drawer.
 
 ## API
 

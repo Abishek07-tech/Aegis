@@ -46,8 +46,30 @@ model CandidateAsset {
   status      String   @default("PENDING")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  sourceUrl  String?
+  collectedAt DateTime?
 
   brand Brand? @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([brandId])
+  @@index([sourceUrl])
+  @@unique([brandId, sourceUrl])
+}
+
+model ScanJob {
+  id            String   @id @default(cuid())
+  status        String   @default("RUNNING")
+  scope         String
+  brandId       String?
+  provider      String?
+  progress      Int      @default(0)
+  assetsAnalyzed Int     @default(0)
+  findings      Int      @default(0)
+  errors        Int      @default(0)
+  errorMessage  String?
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
 
   @@index([status])
   @@index([brandId])
